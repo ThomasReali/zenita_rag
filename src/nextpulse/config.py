@@ -24,6 +24,8 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
 RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", "5"))
 DATA_DIR = Path(os.getenv("DATA_DIR", "./data"))
 
-# Create directories
-CHROMA_PERSIST_DIR.mkdir(parents=True, exist_ok=True)
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+def ensure_directories() -> None:
+    """Create required directories (call once at startup, not on import)."""
+    CHROMA_PERSIST_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)

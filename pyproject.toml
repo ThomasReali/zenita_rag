@@ -10,7 +10,11 @@ dependencies = [
     "openai>=1.3.0",
     "pypdf>=4.0.0",
     "python-dotenv>=1.0.0",
+    "streamlit>=1.28.0",
 ]
+
+[project.scripts]
+nextpulse-ui = "scripts.app:main"  # stub — use `streamlit run scripts/app.py` directly
 
 [build-system]
 requires = ["hatchling"]
