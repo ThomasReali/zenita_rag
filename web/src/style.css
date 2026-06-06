@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+/* ── Design system — "Navy Authority" (enterprise, legal-tech) ─────────────── */
+@theme {
+  --font-display: "Fraunces", ui-serif, Georgia, serif;       /* wordmark / hero */
+  --font-sans: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;      /* numbers / sources */
+
+  --color-navy-950: #060f1f;
+  --color-navy-900: #0a1a30;
+  --color-navy-850: #0c2039;
+  --color-navy-800: #0f2342;
+  --color-navy-700: #163056;
+  --color-navy-600: #1e3e6e;
+  --color-navy-500: #2b5390;
+  --color-navy-300: #8197b9;
+
+  --color-azure-300: #7dd3fc;
+  --color-azure-400: #38bdf8;
+  --color-azure-500: #0ea5e9;
+
+  --color-ink: #0b1b33;        /* primary text on light */
+  --color-slatev: #5a6a85;     /* secondary text */
+  --color-mist: #eef3fa;       /* app background */
+  --color-haze: #dce6f2;       /* hairline borders */
+}
+
+@layer base {
+  html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  body {
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    background-color: var(--color-mist);
+    background-image:
+      radial-gradient(1100px 560px at 112% -12%, rgba(14, 165, 233, 0.10), transparent 60%),
+      radial-gradient(820px 460px at -12% 114%, rgba(10, 26, 48, 0.08), transparent 55%);
+    background-attachment: fixed;
+  }
+  ::selection { background: rgba(14, 165, 233, 0.22); }
+  :focus-visible { outline: 2px solid var(--color-azure-500); outline-offset: 2px; border-radius: 8px; }
+
+  * { scrollbar-width: thin; scrollbar-color: #c4d3e6 transparent; }
+  *::-webkit-scrollbar { width: 11px; height: 11px; }
+  *::-webkit-scrollbar-thumb {
+    background: #c4d3e6; border-radius: 99px;
+    border: 3px solid transparent; background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover { background: #aabfda; background-clip: content-box; }
+}
+
+/* faint engineered grid + top glow on the navy rail */
+.rail-texture {
+  background-image:
+    linear-gradient(to bottom, rgba(56, 189, 248, 0.12), transparent 16%),
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 100% 100%, 24px 24px, 24px 24px;
+}
+
+/* ── motion ────────────────────────────────────────────────────────────────── */
+@keyframes reveal   { from { opacity: 0; transform: translateY(9px); }           to { opacity: 1; transform: none; } }
+@keyframes slidein  { from { opacity: 0; transform: translateY(10px) scale(.99); } to { opacity: 1; transform: none; } }
+@keyframes dot      { 0%, 80%, 100% { opacity: .25; transform: translateY(0); }  40% { opacity: 1; transform: translateY(-3px); } }
+@keyframes grow     { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+.reveal      { opacity: 0; animation: reveal .6s cubic-bezier(.22, .61, .36, 1) forwards; }
+.msg-in      { animation: slidein .42s cubic-bezier(.22, .61, .36, 1) both; }
+.meter > span { transform-origin: left; animation: grow .75s cubic-bezier(.22, .61, .36, 1) .12s both; }
+.dot         { animation: dot 1.2s infinite ease-in-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal, .msg-in, .meter > span, .dot { animation: none; opacity: 1; transform: none; }
+}

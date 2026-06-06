@@ -42,9 +42,21 @@ env/
 data/
 *.pdf
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 chroma_data/
+qdrant_data/
+.index_manifest.json
+role_state.json
+
+# Frontend (web/)
+node_modules/
+web/dist/
 
 # Cache
 .cache/
 *.cache
+
+
+KNOWLEDGE/
