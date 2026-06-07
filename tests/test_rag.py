@@ -571,10 +571,29 @@ class _FakeVS:
         return 3
 
 
+class _FakePseudoSession:
+    """Minimal stand-in for a pseudonymizer session (identity masking)."""
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def mask(self, text):
+        return text
+
+
+class _FakePseudonymizer:
+    def session(self):
+        return _FakePseudoSession()
+
+
 class _FakeRAG:
     def __init__(self):
         self.vector_store = _FakeVS()
         self.model = "fake/model"
+        # api.py masks query text before logging when PII_MASKING_ENABLED is on.
+        self.pseudonymizer = _FakePseudonymizer()
 
     def query(self, question, chat_history=None, k=None, role=None):
         if question == "boom":
@@ -616,7 +635,23 @@ class TestAPI:
         with self._client(monkeypatch) as client:
             resp = client.post("/api/query", json={"question": "boom"})
         assert resp.status_code == 502
-        assert "provider 429" in resp.json()["detail"]
+        # Security: raw provider/exception text must NOT leak to the client.
+        detail = resp.json()["detail"]
+        assert "provider 429" not in detail
+        assert "RuntimeError" not in detail
+        assert "non è momentaneamente disponibile" in detail
+
+    def test_query_rejects_abusive_input(self, monkeypatch):
+        """Input-validation hard limits return 422 (defense-in-depth, not 500/502)."""
+        with self._client(monkeypatch) as client:
+            assert client.post("/api/query", json={"question": ""}).status_code == 422
+            assert client.post("/api/query", json={"question": "A" * 9000}).status_code == 422
+            assert client.post("/api/query", json={"question": "x", "k": -1}).status_code == 422
+            assert client.post("/api/query", json={"question": "x", "k": 9999}).status_code == 422
+            big_history = [{"role": "user", "content": "a"} for _ in range(50)]
+            assert client.post(
+                "/api/query", json={"question": "x", "history": big_history}
+            ).status_code == 422
 
     def test_query_role_passthrough(self, monkeypatch):
         with self._client(monkeypatch) as client:

@@ -7,7 +7,11 @@ Endpoints:
 If web/dist exists (built frontend), it is served at /.
 """
 import asyncio
+import json
+import logging
+import queue
 import sys
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
@@ -17,12 +21,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fastapi import FastAPI, HTTPException  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
-from pydantic import BaseModel  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
 
 from src.nextpulse import config  # noqa: E402
 from src.nextpulse.rag_chain import RAGChain  # noqa: E402
 from src.nextpulse.query_log import QueryLog  # noqa: E402
+from src.nextpulse.vector_store import VectorStore  # noqa: E402
+from src.nextpulse.ram_scraper import (  # noqa: E402
+    BANDI_COLLECTION,
+    CATEGORY_LABELS,
+    RamScraper,
+)
 try:
     from role_manager import ROLES  # noqa: E402
 except ImportError as _err:
@@ -32,18 +43,89 @@ except ImportError as _err:
     ) from _err
 
 
+logger = logging.getLogger("nextpulse.api")
+
+# ── Input limits (defense-in-depth: reject oversized/abusive payloads at the edge) ──
+MAX_QUESTION_CHARS = 4000     # a question longer than this is almost certainly abuse
+MAX_MESSAGE_CHARS = 8000      # per chat-history message
+MAX_HISTORY_MESSAGES = 20     # bound conversational-memory size (token/cost guard)
+MAX_ID_CHARS = 200            # opaque session/user identifiers
+
+# ── Bandi/gare (RAM) chatbot — domain-specific grounding prompt ──────────────────
+BANDI_SYSTEM_PROMPT = """\
+Sei un assistente specializzato nelle gare d'appalto di R.A.M. Logistica \
+Infrastrutture e Trasporti S.p.A. Supporti l'ufficio gare a capire requisiti, \
+scadenze, importi e condizioni dei bandi pubblicati sul portale acquisti RAM.
+
+REGOLE FONDAMENTALI:
+1. GROUNDING: Rispondi ESCLUSIVAMENTE con le informazioni presenti nei \
+"DOCUMENTI DI GARA" qui sotto (disciplinari, capitolati, bandi, esiti).
+2. NO HALLUCINATION: Se l'informazione non è nei documenti, dichiara: "Questa \
+informazione non è presente nei documenti di gara indicizzati." Non inventare \
+requisiti, importi, CIG o scadenze.
+3. REQUISITI: Quando ti vengono chiesti i requisiti di partecipazione, elencali \
+in modo puntuale e distingui (idoneità professionale, capacità economico-finanziaria, \
+capacità tecnico-professionale, requisiti di ordine generale) quando possibile.
+4. CITAZIONI: Cita SEMPRE la fonte usando l'etichetta [Fonte: ...] che precede \
+ciascun documento, indicando il bando/CIG di riferimento.
+5. TONE: Professionale, sintetico, strutturato (elenchi puntati).
+
+DOCUMENTI DI GARA:
+{context_str}
+
+Domanda dell'utente: {standalone_query}
+Risposta:"""
+
+BANDI_NO_CONTEXT = (
+    "Questa informazione non è presente nei documenti di gara indicizzati. "
+    "Avvia o aggiorna lo scraping dei bandi, oppure riformula la domanda."
+)
+
+
+def _bandi_vector_store(app: FastAPI) -> VectorStore:
+    """Lazily create (and cache) the VectorStore bound to the bandi collection.
+
+    Kept separate from the main KB so the gare corpus never mixes with the company
+    documentation, and so scraping/indexing works even without an LLM API key."""
+    vs = getattr(app.state, "bandi_vs", None)
+    if vs is None:
+        # Reuse the main store's Qdrant client + embedder: the embedded Qdrant locks the
+        # whole storage folder per process, and a second SentenceTransformer load is wasteful.
+        main = app.state.rag.vector_store
+        vs = VectorStore(
+            collection_name=BANDI_COLLECTION,
+            client=main.client,
+            embedder=main.embedder,
+        )
+        app.state.bandi_vs = vs
+    return vs
+
+
+def _bandi_rag(app: FastAPI) -> RAGChain:
+    """Lazily create (and cache) the bandi-scoped RAG chatbot (needs an LLM key)."""
+    rag = getattr(app.state, "bandi_rag", None)
+    if rag is None:
+        rag = RAGChain(
+            vector_store=_bandi_vector_store(app),
+            system_prompt_template=BANDI_SYSTEM_PROMPT,
+            no_context_message=BANDI_NO_CONTEXT,
+        )
+        app.state.bandi_rag = rag
+    return rag
+
+
 class ChatMessage(BaseModel):
-    role: str
-    content: str
+    role: str = Field(min_length=1, max_length=32)
+    content: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
 
 
 class QueryRequest(BaseModel):
-    question: str
-    history: List[ChatMessage] = []
-    k: Optional[int] = None
-    role: Optional[str] = None  # sales | presales | bid_manager (None → default behaviour)
-    session_id: Optional[str] = None  # opaque per-session id (PII → anonymized after retention)
-    user_id: Optional[str] = None     # opaque client id (PII → anonymized after retention)
+    question: str = Field(min_length=1, max_length=MAX_QUESTION_CHARS)
+    history: List[ChatMessage] = Field(default_factory=list, max_length=MAX_HISTORY_MESSAGES)
+    k: Optional[int] = Field(default=None, ge=1, le=20)  # bound retrieval breadth (cost/DoS)
+    role: Optional[str] = Field(default=None, max_length=32)  # membership validated downstream (ROLES)
+    session_id: Optional[str] = Field(default=None, max_length=MAX_ID_CHARS)  # opaque id (PII)
+    user_id: Optional[str] = Field(default=None, max_length=MAX_ID_CHARS)     # opaque id (PII)
 
 
 class QueryResponse(BaseModel):
@@ -70,6 +152,10 @@ async def lifespan(app: FastAPI):
     # so the async event loop is not blocked during startup.
     app.state.documents = await asyncio.to_thread(app.state.rag.vector_store.count_sources)
     app.state.query_log = QueryLog() if config.QUERY_LOG_ENABLED else None
+    # Bandi/gare section state: cached scrape results + a lock serializing access to the
+    # embedded Qdrant bandi collection (writes during scrape vs reads during chat).
+    app.state.bandi_cache = []
+    app.state.bandi_lock = threading.Lock()
     yield
 
 
@@ -130,8 +216,12 @@ def query(req: QueryRequest):
             k=req.k,
             role=req.role,
         )
-    except Exception as e:  # surface LLM/provider errors (e.g. 429) to the UI
-        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+    except Exception:  # never leak provider internals / stack traces to the client
+        logger.exception("query pipeline failed")
+        raise HTTPException(
+            status_code=502,
+            detail="Il servizio di generazione non è momentaneamente disponibile. Riprova tra poco.",
+        )
 
     # Query logging must never break the response (GDPR audit trail, best-effort).
     log = getattr(app.state, "query_log", None)
@@ -145,6 +235,100 @@ def query(req: QueryRequest):
             log.record_result(logged, session_id=req.session_id, user_id=req.user_id)
         except Exception:
             pass
+    return result
+
+
+# ── Bandi / Gare d'Appalto (R.A.M.) ──────────────────────────────────────────────
+
+class BandiQueryRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=MAX_QUESTION_CHARS)
+    history: List[ChatMessage] = Field(default_factory=list, max_length=MAX_HISTORY_MESSAGES)
+    k: Optional[int] = Field(default=None, ge=1, le=20)
+
+
+def _grouped(tenders: List[dict]) -> dict:
+    """Shape the cached scrape result for the UI: grouped by business category."""
+    groups: dict = {key: [] for key in CATEGORY_LABELS}
+    for t in tenders:
+        groups.setdefault(t.get("category", "aggiudicazione"), []).append(t)
+    return {
+        "categories": [
+            {"key": key, "label": CATEGORY_LABELS.get(key, key), "tenders": groups.get(key, [])}
+            for key in CATEGORY_LABELS
+        ],
+        "total": len(tenders),
+    }
+
+
+@app.get("/api/bandi")
+def bandi_list():
+    """Return the last scraped bandi (grouped), without re-scraping."""
+    return _grouped(getattr(app.state, "bandi_cache", []))
+
+
+@app.get("/api/bandi/scrape")
+async def bandi_scrape():
+    """Scrape RAM bandi (in corso + aggiudicazione), index them, and stream progress.
+
+    Server-Sent Events: each line is `data: {json}` with a `phase` field
+    (`listing` | `tender` | `done` | `error`). The UI shows a live spinner/progress
+    and renders each bando as it is indexed.
+    """
+    q: "queue.Queue" = queue.Queue()
+    holder: dict = {}
+    vs = _bandi_vector_store(app)
+    lock = app.state.bandi_lock
+
+    def worker():
+        # Serialize against the bandi chatbot's reads on the embedded Qdrant collection.
+        with lock:
+            try:
+                scraper = RamScraper(vector_store=vs)
+                holder["results"] = scraper.ingest(progress=q.put)
+            except Exception as exc:  # surface a clean error event to the stream
+                logger.exception("bandi scrape failed")
+                q.put({"phase": "error", "message": str(exc)})
+            finally:
+                q.put(None)  # stream sentinel
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    async def event_stream():
+        while True:
+            event = await asyncio.to_thread(q.get)
+            if event is None:
+                break
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        if "results" in holder:
+            app.state.bandi_cache = holder["results"]
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/bandi/query", response_model=QueryResponse)
+def bandi_query(req: BandiQueryRequest):
+    """RAG chatbot scoped to the scraped RAM bandi corpus."""
+    try:
+        rag = _bandi_rag(app)
+    except ValueError as exc:  # missing LLM API key
+        raise HTTPException(status_code=503, detail=str(exc))
+    try:
+        with app.state.bandi_lock:
+            result = rag.query(
+                req.question,
+                chat_history=[m.model_dump() for m in req.history],
+                k=req.k,
+            )
+    except Exception:
+        logger.exception("bandi query pipeline failed")
+        raise HTTPException(
+            status_code=502,
+            detail="Il servizio di generazione non è momentaneamente disponibile. Riprova tra poco.",
+        )
     return result
 
 

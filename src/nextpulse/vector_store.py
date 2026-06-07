@@ -31,10 +31,16 @@ def _sparse_vector(text: str, is_query: bool) -> Optional[models.SparseVector]:
 class VectorStore:
     """Local Qdrant store with hybrid retrieval; interface stable across phases."""
 
-    def __init__(self):
-        self.embedder = SentenceTransformer(config.EMBEDDING_MODEL)
-        self.collection_name = config.COLLECTION_NAME
-        if config.QDRANT_URL:
+    def __init__(self, collection_name: Optional[str] = None, client=None, embedder=None):
+        # The embedded (path-based) Qdrant locks the whole storage folder per process, so a
+        # second store over the same data MUST reuse the existing client (and may reuse the
+        # embedder to avoid loading the model twice). Pass `client`/`embedder` to share them;
+        # only the `collection_name` differs (e.g. the bandi/gare corpus).
+        self.embedder = embedder or SentenceTransformer(config.EMBEDDING_MODEL)
+        self.collection_name = collection_name or config.COLLECTION_NAME
+        if client is not None:
+            self.client = client
+        elif config.QDRANT_URL:
             self.client = QdrantClient(url=config.QDRANT_URL)
         else:
             self.client = QdrantClient(path=str(config.QDRANT_PATH))

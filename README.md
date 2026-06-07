@@ -99,6 +99,27 @@ GDPR** (audit log + anonimizzazione notturna + **pseudonimizzazione reversibile 
 **UI FastAPI + frontend Vite/TS/Tailwind**, **hardening** (indicizzazione incrementale, retry, logging) e
 **69 test**. *(Rinviato: OCR scansioni — serve il language pack `ita`.)*
 
+### Sezione Gare d'Appalto (R.A.M.) — scraping live + RAG dedicato
+Sezione separata dal chatbot principale (switch nella command rail). All'apertura esegue lo
+**scraping live** del portale acquisti di *R.A.M. Logistica Infrastrutture e Trasporti S.p.A.*
+(`ramspa.acquistitelematici.it`) e mostra una **rotellina di caricamento con avanzamento**
+man mano che ogni bando viene indicizzato.
+
+```
+GET /ws/tender/fe (JSON) → bandi → categorizza per stato (in corso / aggiudicazione)
+   → per bando: detail page → seleziona doc con i requisiti (disciplinare/capitolato/bando/esito)
+   → download PDF → chunking strutturale (DocumentProcessor) → embed → Qdrant (collezione `bandi_ram`)
+   → estrazione euristica dei REQUISITI di partecipazione → SSE di avanzamento alla UI
+```
+
+- **Scraper**: `src/nextpulse/ram_scraper.py` (anche CLI headless: `python scripts/ingest_ram.py`).
+- **Collezione dedicata** `bandi_ram` (separata dalla KB aziendale), che riusa client Qdrant ed
+  embedder della store principale (l'embedded Qdrant blocca la cartella per processo).
+- **Requisiti evidenziati** per ogni bando nelle card + chunk sintetico “Requisiti” recuperabile.
+- **Chatbot dedicato** alle gare, *grounded* solo sui documenti di gara indicizzati, con citazioni.
+- **Endpoint**: `GET /api/bandi/scrape` (SSE progress), `GET /api/bandi` (elenco in cache raggruppato),
+  `POST /api/bandi/query` (RAG sulle gare).
+
 ### Data Governance & privacy (GDPR)
 - **Grounding & anti-allucinazione**: il gate deterministico rifiuta fuori dominio (nessuna generazione).
 - **Tracciabilità**: ogni risposta cita file + pagina; il `QueryResult` espone `grounded`/`ambiguous`/`confidence`.

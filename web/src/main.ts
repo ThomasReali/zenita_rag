@@ -1,4 +1,5 @@
 import './style.css'
+import { initBandi } from './bandi'
 
 interface QueryResponse {
   query: string
@@ -136,6 +137,20 @@ function render() {
       </div>
       <div class="mx-7 h-px bg-white/10"></div>
 
+      <!-- VIEW SWITCH -->
+      <nav class="reveal px-5 py-4" style="animation-delay:.06s">
+        <button id="nav-chat" data-view="chat" class="nav-item group mb-1.5 flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium text-white/90 transition">
+          <span class="nav-ico grid h-7 w-7 place-items-center rounded-lg bg-white/[0.06] text-azure-300 ring-1 ring-white/10">${ICONS.pulse}</span>
+          <span>Assistente Pre-Sales</span>
+        </button>
+        <button id="nav-bandi" data-view="bandi" class="nav-item group flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium text-white/90 transition">
+          <span class="nav-ico grid h-7 w-7 place-items-center rounded-lg bg-white/[0.06] text-azure-300 ring-1 ring-white/10">${ICONS.search}</span>
+          <span>Gare d'Appalto · R.A.M.</span>
+        </button>
+      </nav>
+
+      <div class="mx-7 h-px bg-white/10"></div>
+
       <div class="reveal px-7 py-5" style="animation-delay:.09s">
         <div class="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-navy-300">Knowledge base</div>
         <div id="kb" class="grid grid-cols-2 gap-2.5">${tile('Documenti', '—')}${tile('Chunk', '—')}</div>
@@ -167,7 +182,7 @@ function render() {
     </aside>
 
     <!-- CHAT -->
-    <main class="relative flex min-w-0 flex-1 flex-col">
+    <main id="chat-main" class="relative flex min-w-0 flex-1 flex-col">
       <!-- BARRA SWITCH UTENTE — sopra l'header, con il colore della colonna sinistra (navy) -->
       <div class="rail-texture relative flex items-center gap-4 bg-navy-900 px-7 py-3 text-white">
         <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-azure-400/60 to-transparent"></div>
@@ -212,6 +227,9 @@ function render() {
         <p class="mx-auto mt-2 max-w-3xl text-center font-mono text-[9.5px] uppercase tracking-[0.14em] text-slatev/60">Risponde solo sui documenti · cita le fonti · verifica i dati critici</p>
       </div>
     </main>
+
+    <!-- GARE D'APPALTO (R.A.M.) — separate section, initialized lazily -->
+    <main id="bandi-main" class="relative hidden min-w-0 flex-1 flex-col"></main>
 
     <!-- RF17 — LIMITI DEL SISTEMA (modal) -->
     <div id="limits-modal" class="fixed inset-0 z-50 hidden items-center justify-center p-4">
@@ -263,8 +281,30 @@ function render() {
   })
   applyTheme(preferredTheme())  // set the button icon now that it exists
 
+  // View switch: sales assistant chat ↔ Gare d'Appalto (R.A.M.) section.
+  $('#nav-chat').addEventListener('click', () => showView('chat'))
+  $('#nav-bandi').addEventListener('click', () => showView('bandi'))
+  showView('chat')
+
   updateExportState()
   greet()
+}
+
+let bandiReady = false
+function showView(view: 'chat' | 'bandi') {
+  const chat = $('#chat-main')
+  const bandi = $('#bandi-main')
+  const isBandi = view === 'bandi'
+  chat.classList.toggle('hidden', isBandi)
+  chat.classList.toggle('flex', !isBandi)
+  bandi.classList.toggle('hidden', !isBandi)
+  bandi.classList.toggle('flex', isBandi)
+  $('#nav-chat').classList.toggle('nav-active', !isBandi)
+  $('#nav-bandi').classList.toggle('nav-active', isBandi)
+  if (isBandi && !bandiReady) {
+    bandiReady = true
+    initBandi(bandi)
+  }
 }
 
 // Enable the export button only once there is something to export.

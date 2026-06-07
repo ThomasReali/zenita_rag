@@ -82,14 +82,20 @@ Risposta:"""
 class RAGChain:
     """Retrieval-Augmented Generation chain with conversational memory"""
 
-    def __init__(self):
+    def __init__(self, vector_store: Optional[VectorStore] = None,
+                 system_prompt_template: Optional[str] = None,
+                 no_context_message: Optional[str] = None):
         if not config.OPENAI_API_KEY:
             raise ValueError(
                 "OPENROUTER_API_KEY / OPENAI_API_KEY not set — "
                 "create a .env file or set the env var"
             )
 
-        self.vector_store = VectorStore()
+        # A caller can inject a vector store bound to a different collection (e.g. the
+        # bandi/gare RAM corpus) and a domain-specific prompt, reusing the whole pipeline.
+        self.vector_store = vector_store or VectorStore()
+        self.system_prompt_template = system_prompt_template or SYSTEM_PROMPT
+        self.no_context_message = no_context_message or NO_CONTEXT_MESSAGE
         self.client = OpenAI(
             api_key=config.OPENAI_API_KEY,
             base_url=config.OPENAI_BASE_URL,
@@ -271,7 +277,7 @@ class RAGChain:
             # Gate 1 (RF10) — nothing relevant → deterministic refusal, no generation. (🔴)
             grounded, ambiguous, confidence = False, False, "red"
             sources: List[str] = []
-            response = rm.format_response("", [], "red") if rm else NO_CONTEXT_MESSAGE
+            response = rm.format_response("", [], "red") if rm else self.no_context_message
         elif (config.AMBIGUITY_JUDGE and distinct >= 2
               and self._detect_conflict(standalone_query, docs, metas, session=session)):
             # Gate 2 (ambiguity) — conflicting sources → discretion / defer to a human. (🔴)
@@ -293,7 +299,7 @@ class RAGChain:
                 system_prompt = rm.get_system_prompt() + "\n\nDOCUMENTI AZIENDALI:\n" + context_str
                 max_tokens = rm.get_current_role().max_response_length
             else:
-                system_prompt = SYSTEM_PROMPT.format(
+                system_prompt = self.system_prompt_template.format(
                     context_str=context_str, standalone_query=standalone_query
                 )
                 max_tokens = None
