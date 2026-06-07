@@ -1,6 +1,6 @@
 # NextPulse — Documento dei Requisiti
 
-> **Stato:** bozza riveduta (rev. 3) · **Data:** 2026-06-07 · **Owner:** team NextPulse
+> **Stato:** bozza riveduta (rev. 4 — modulo Bandi/Gare R.A.M. + hardening sicurezza API) · **Data:** 2026-06-07 · **Owner:** team NextPulse
 > Documento di lavoro interno. Descrive **cosa** deve fare l'AI Sales Assistant per Engine SpA
 > e i casi d'uso che deve coprire. Compagno di [MODELLO_DATI.md](./MODELLO_DATI.md) (com'è
 > strutturato il dato — **unica fonte di verità per la configurazione**) e [BRIEF.md](./BRIEF.md)
@@ -101,6 +101,31 @@ della challenge (Anceschi, Pastore, Guida) come fonte di requisiti via discovery
   risposta (elaborazione *zero-knowledge*). Backend regex sempre attivo, **Microsoft Presidio** (NER) opzionale.
   *(modulo `pseudonymizer.py`; mappa effimera distrutta a fine richiesta; campo `pii_masked` nel `QueryResult`)*
 
+### RF — Bandi / Gare d'appalto (modulo R.A.M.)
+> Modulo aggiuntivo e **autonomo** rispetto alla KB Engine SpA: assiste l'**Ufficio Gare** di
+> R.A.M. (Logistica Infrastrutture e Trasporti S.p.A.) a leggere requisiti, scadenze, importi e
+> condizioni dei bandi pubblicati sul portale e-procurement RAM. Corpus tenuto **separato** dalla
+> documentazione aziendale (collection Qdrant dedicata) così i due domini non si mescolano mai.
+
+- **RF24** **Scraping & ingestion bandi:** estrarre i bandi dal portale e-procurement RAM
+  (web service JSON), **categorizzarli** in *Bandi in corso* / *Bandi in aggiudicazione* (mappatura
+  dallo `stato` del portale), scaricare per ogni bando **solo** i documenti che portano requisiti
+  (disciplinare, capitolato, bando, esito/verbale — boilerplate come DGUE/privacy/modello-offerta
+  scartati; max 4 doc/bando), riusare lo stesso chunking strutturale a token e **indicizzare** in una
+  **collection Qdrant dedicata** (`bandi_ram`, separata da `documents`). Re-index **idempotente** (drop
+  delle source del bando prima del re-insert). *(`src/nextpulse/ram_scraper.py`; `scripts/ingest_ram.py`)*
+- **RF25** **Estrazione requisiti di partecipazione:** per ogni bando, euristica che individua il
+  blocco "requisiti …" (idoneità professionale / capacità economico-finanziaria / tecnico-professionale /
+  ordine generale) e ne ricava un elenco; viene creato un **chunk sintetico "Requisiti (estratti)"**
+  recuperabile, così il chatbot li può esporre anche quando sono sparsi su più PDF.
+- **RF26** **Chatbot bandi grounded:** chatbot RAG **ristretto al solo corpus bandi** (system prompt
+  dedicato alle gare RAM; fallback esplicito "informazione non presente nei documenti di gara
+  indicizzati"). Riusa l'intera pipeline RAG (retrieval hybrid, gate, citazioni). *(`POST /api/bandi/query`)*
+- **RF27** **Avanzamento scraping in tempo reale (SSE):** l'operazione di scraping emette eventi di
+  progresso (`listing`/`tender`/`done`/`error`) via **Server-Sent Events**; la UI mostra spinner +
+  avanzamento live e renderizza ogni bando man mano che viene indicizzato. *(`GET /api/bandi/scrape`,
+  `GET /api/bandi`; frontend `web/src/bandi.ts`)*
+
 ## 4. Requisiti non funzionali
 
 - **RNF1** Esecuzione **locale** sul portatile (CachyOS); LLM via **API OpenAI**. ⚠️ Dipende da
@@ -111,6 +136,17 @@ della challenge (Anceschi, Pastore, Guida) come fonte di requisiti via discovery
 - **RNF4** Setup riproducibile (`.env`, dipendenze pinnate) per "collegare i cavi" il giorno della demo.
 - **RNF5** Robustezza a dataset "sporco": un file illeggibile non deve bloccare l'intera ingestion.
   ✅ Implementato in Fase 1 (try/except per-file + report; 0 crash sui 539 file).
+- **RNF6** **Hardening sicurezza API.** ✅ Implementato.
+  - **Validazione input al bordo:** ogni richiesta `/api/query` e `/api/bandi/query` ha limiti rigidi
+    (lunghezza `question` ≤ 4000, messaggio history ≤ 8000, max 20 messaggi, `k` ∈ [1, 20], id opachi
+    ≤ 200) → payload abusivi/sovradimensionati respinti con **HTTP 422** (difesa da DoS / costo LLM
+    incontrollato). *(vincoli Pydantic `Field` in `src/nextpulse/api.py`)*
+  - **No information disclosure:** gli errori della pipeline non espongono mai eccezione/stack/dettagli
+    del provider al client → messaggio generico HTTP **502**, dettaglio solo nel log server-side.
+  - *Iniezioni:* l'audit log SQLite usa **solo query parametrizzate** (nessuna concatenazione di input
+    → SQL injection non applicabile); il vector store non costruisce query da stringhe utente.
+  - *Aperto (backlog):* rate-limiting per IP/sessione e ruolo da **identità autenticata** server-side
+    (oggi il `role` è selezionato dal client → governance, non sicurezza — vedi §6).
 
 ## 5. Casi d'uso
 
@@ -148,6 +184,15 @@ della challenge (Anceschi, Pastore, Guida) come fonte di requisiti via discovery
 - **Esito:** nuovi chunk disponibili alla query; conteggio KB aggiornato in UI.
 - **Edge:** file corrotto/non supportato → skippato con log, ingestion prosegue (RNF5).
 
+### UC7 — Bandi/gare R.A.M.: scraping e interrogazione (modulo bandi)
+- **Attore:** Ufficio Gare (R.A.M.). **Pre:** portale e-procurement raggiungibile.
+- **Flusso:** avvia lo scraping dei bandi → vede l'avanzamento live (SSE) e i bandi indicizzati
+  raggruppati (in corso / aggiudicazione) → chiede "quali sono i requisiti di partecipazione del
+  bando X?" → retrieval sul corpus bandi → risposta con requisiti + fonte (CIG/bando).
+- **Esito:** requisiti/scadenze/importi sintetizzati e **citati**; risposte solo dai documenti di gara.
+- **Edge:** informazione non nei bandi indicizzati → fallback "non presente nei documenti di gara";
+  un PDF non scaricabile/parsabile non blocca il bando né lo scraping (robustezza, cfr. RNF5).
+
 ## 6. Fuori scope (per l'hackathon) → alimenta "rischi e limiti" del pitch
 
 - Autenticazione/SSO e permessi *per utente* (la **role-awareness** RF20 introduce i 3 profili e gli
@@ -176,6 +221,9 @@ della challenge (Anceschi, Pastore, Guida) come fonte di requisiti via discovery
 | RF20 | UC1, UC3 | extra | ✅ fatto (3 profili + selettore UI + `confidence`; `role_manager.py`) |
 | RF21, RF22 | tutti | extra | ✅ fatto (query log SQLite + job notturno di anonimizzazione GDPR; `/api/privacy`) |
 | RF23 | tutti | extra | ✅ fatto (pseudonimizzazione reversibile PII; backend regex + Presidio opzionale) |
+| RF24, RF25 | UC7 | bandi | ✅ fatto (scraper RAM + collection `bandi_ram` + estrazione requisiti; `ram_scraper.py`) |
+| RF26, RF27 | UC7 | bandi | ✅ fatto (chatbot bandi grounded `/api/bandi/query` + scraping SSE `/api/bandi/scrape`) |
+| RNF6 | tutti | sicurezza | ✅ fatto (validazione input → 422, no leak errori; rate-limit/auth ruolo in backlog) |
 
 ## 8. Assunzioni & rischi aperti
 

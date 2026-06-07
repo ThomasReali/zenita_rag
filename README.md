@@ -138,6 +138,16 @@ GET /ws/tender/fe (JSON) → bandi → categorizza per stato (in corso / aggiudi
   uv run python scripts/anonymize_logs.py            # cron notturno: 30 2 * * *
   ```
 
+### Sicurezza (hardening API)
+- **Validazione input al bordo** (Pydantic) su `/api/query` e `/api/bandi/query`: `question` ≤ 4000 char,
+  history ≤ 20 messaggi (≤ 8000 char l'uno), `k` ∈ [1, 20], id opachi ≤ 200 → input abusivo/sovradimensionato
+  respinto con **HTTP 422** (difesa da DoS e da costo LLM incontrollato).
+- **No information disclosure**: gli errori della pipeline non espongono eccezione/stack/dettagli del provider
+  al client → **HTTP 502** con messaggio generico, dettaglio solo nel log server-side.
+- **SQL injection non applicabile**: l'audit log SQLite usa solo query **parametrizzate**.
+- *In backlog*: rate-limiting per IP/sessione; `role` da **identità autenticata** server-side (oggi è
+  selezionato dal client → governance, non sicurezza).
+
 ## 5. Configurazione
 
 Tutto in `.env` (vedi `.env.example` — fonte di verità in [MODELLO_DATI.md §5](./docs/MODELLO_DATI.md)):

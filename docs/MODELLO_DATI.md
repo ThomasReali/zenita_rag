@@ -1,6 +1,6 @@
 # NextPulse — Modello Dati
 
-> **Stato:** rev. 4 (role-awareness + query log GDPR + pseudonimizzazione PII) · **Data:** 2026-06-07 · **Owner:** team NextPulse
+> **Stato:** rev. 5 (modulo Bandi/Gare R.A.M. + hardening sicurezza API) · **Data:** 2026-06-07 · **Owner:** team NextPulse
 > Documento di lavoro interno. Definisce le entità, i formati di input, lo schema dei chunk
 > indicizzati e gli oggetti scambiati dalla pipeline RAG. **È l'unica fonte di verità per la
 > configurazione (§5).** Compagno di [REQUISITI.md](./REQUISITI.md) e [BRIEF.md](./BRIEF.md).
@@ -129,6 +129,52 @@ ed è distrutta a fine query (zero residuo).
 > in memoria) · 3) Elaborazione esterna *zero-knowledge* (l'LLM manipola i token) · 4) Re-identificazione locale +
 > distruzione della mappa. Tutte le chiamate LLM (condense, giudice ambiguità, generazione) passano dal layer.
 
+### 3.6 Bando / Tender (modulo Bandi/Gare R.A.M.) — **corpus separato**
+Entità del modulo gare R.A.M. (`src/nextpulse/ram_scraper.py`). I bandi vivono in una **collection
+Qdrant dedicata** — `bandi_ram` (costante `BANDI_COLLECTION`) — **separata** da `documents` (KB Engine
+SpA), così i due domini non si mescolano mai nel retrieval. La collection riusa **lo stesso client Qdrant
+e lo stesso embedder** del processo (l'embedded Qdrant blocca l'intera cartella per processo; un secondo
+`SentenceTransformer` sarebbe spreco).
+
+**Tender** (oggetto di business esposto alla UI da `GET /api/bandi`, prodotto dallo scraping):
+
+| Campo | Tipo | Origine | Note |
+|-------|------|---------|------|
+| `id` | str | portale | id gara |
+| `title` | str | portale | oggetto del bando |
+| `cig` | str | portale | Codice Identificativo Gara |
+| `tipologia` / `stato` | str | portale | tipo procedura · stato grezzo |
+| `category` | enum | derivato da `stato` | `in_corso` \| `aggiudicazione` (raggruppamento UI) |
+| `data_pubblicazione` / `data_scadenza` | str | portale | scadenze |
+| `importo` | str | portale | importo complessivo gara |
+| `rup` / `servizio` | str | portale | responsabile · ente/servizio |
+| `detail_url` | str | portale | pagina di dettaglio (fonte dei PDF) |
+| `documents[]` | list | enrichment | doc indicizzati `{label, url, chunks}` |
+| `requirements[]` | list | estrazione | requisiti di partecipazione (RF25) |
+| `chunks` | int | indicizzazione | n. chunk indicizzati per il bando |
+
+**Chunk bando** (point in `bandi_ram`): stessa struttura del Chunk §3.2 (vettori dense+BM25, testo in
+`_text`, id UUID5 deterministico) con **payload specifico**:
+
+| Campo (metadata) | Tipo | Scopo |
+|------------------|------|-------|
+| `source` | str | `RAM_bando_<id>_<file>` (o `…_requisiti` per il chunk sintetico) — citazione |
+| `chunk_id` | int | ordine nel documento |
+| `doc_type` | str | `pdf` (documento di gara) \| `txt` (chunk requisiti sintetico) |
+| `category` | str | `bando` (fisso per questo corpus) |
+| `gara_category` | str | `in_corso` \| `aggiudicazione` |
+| `tender_id` / `tender_title` | str | gara di appartenenza |
+| `cig` | str | citazione/riferimento gara |
+| `stato` | str | stato grezzo del portale |
+| `doc_label` | str | etichetta del documento (es. *Disciplinare*, *Requisiti (estratti)*) |
+| `source_url` | str | URL della pagina di dettaglio della gara |
+
+> **Selezione documenti & robustezza:** per ogni bando si scaricano **solo** i documenti che portano
+> requisiti (disciplinare/capitolato/bando/esito…, max 4), saltando i form boilerplate e i file macchina
+> (`.xml`, `.p7m`, `.zip`…). Un PDF non scaricabile/parsabile viene loggato e saltato, non blocca il bando;
+> un bando in errore non blocca lo scraping (stessa filosofia RNF5). Re-index **idempotente** (le `source`
+> del bando vengono droppate prima del re-insert).
+
 ## 4. Oggetti runtime della pipeline RAG
 
 ### 4.1 ChatMessage
@@ -169,14 +215,26 @@ Con un **profilo attivo** (RF20) il `QueryResult` porta anche **`role`** e **`co
 ### 4.3 Contratto API REST (implementato — `src/nextpulse/api.py`)
 Backend FastAPI + frontend Vite/TS/Tailwind:
 ```
-POST /api/query   { "question": str, "history": ChatMessage[], "k"?: int,
-                    "role"?: str, "session_id"?: str, "user_id"?: str }  → QueryResponse (= QueryResult + role, confidence)
-GET  /api/status  → { "documents": int (distinti), "chunks": int, "model": str }
-GET  /api/roles   → [ { "key", "name", "terminology_level", "require_source_citation" } ]            (RF20)
-GET  /api/privacy → { "logging_enabled", "retention_months", "anonymization", "total", "identified", "anonymized", "oldest" }  (RF22)
+POST /api/query        { "question": str, "history": ChatMessage[], "k"?: int,
+                         "role"?: str, "session_id"?: str, "user_id"?: str }  → QueryResponse (= QueryResult + role, confidence)
+GET  /api/status       → { "documents": int (distinti), "chunks": int, "model": str }
+GET  /api/roles        → [ { "key", "name", "terminology_level", "require_source_citation" } ]        (RF20)
+GET  /api/privacy      → { "logging_enabled", "retention_months", "anonymization", "total", "identified", "anonymized", "oldest" }  (RF22)
+— modulo Bandi/Gare R.A.M. —
+GET  /api/bandi        → { "categories": [ { "key", "label", "tenders": Tender[] } ], "total": int }   (RF24, ultimo scrape)
+GET  /api/bandi/scrape → text/event-stream: `data: {phase: listing|tender|done|error, …}`             (RF27, SSE)
+POST /api/bandi/query  { "question": str, "history": ChatMessage[], "k"?: int }  → QueryResponse        (RF26, corpus `bandi_ram`)
 ```
-Errori LLM (es. 429) → HTTP **502**. Se `web/dist/` esiste, FastAPI serve anche la UI (single-origin).
-`session_id`/`user_id` sono identificatori **opachi** (no PII intrinseca) usati per l'audit log e anonimizzati dopo la retention.
+Se `web/dist/` esiste, FastAPI serve anche la UI (single-origin). `session_id`/`user_id` sono identificatori
+**opachi** (no PII intrinseca) usati per l'audit log e anonimizzati dopo la retention.
+
+**Hardening sicurezza (RNF6):**
+- **Validazione input (Pydantic `Field`)** su `/api/query` e `/api/bandi/query`: `question` 1–4000 char,
+  messaggio history 1–8000 char, **max 20** messaggi, `k` ∈ **[1, 20]**, `role` ≤ 32, `session_id`/`user_id`
+  ≤ 200 → input fuori limite respinto con **HTTP 422** (difesa da DoS / costo LLM incontrollato).
+- **Errori non rivelano internals:** una eccezione nella pipeline → **HTTP 502** con messaggio generico
+  ("servizio non momentaneamente disponibile"); l'eccezione/stack/dettaglio provider è solo nel **log
+  server-side** (no information disclosure). `/api/bandi/query` → **503** se manca la chiave LLM.
 
 ## 5. Configurazione (unica fonte di verità)
 
