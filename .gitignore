@@ -58,5 +58,10 @@ web/dist/
 .cache/
 *.cache
 
+# Logs (runtime output, never commit)
+*_log.txt
+*.err
+*.log
+
 
 KNOWLEDGE/
