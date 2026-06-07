@@ -23,6 +23,18 @@
   --color-slatev: #5a6a85;     /* secondary text */
   --color-mist: #eef3fa;       /* app background */
   --color-haze: #dce6f2;       /* hairline borders */
+  --color-card: #ffffff;       /* elevated surfaces (chat bubbles, input) */
+}
+
+/* ── Dark theme — token remap (toggled via .dark on <html>) ─────────────────── */
+/* The navy rail/top-bar stay dark in both modes; only the light content surfaces
+   flip. Utilities read these CSS vars, so overriding them cascades everywhere. */
+.dark {
+  --color-ink: #e7eefb;        /* primary text on dark */
+  --color-slatev: #97a8c6;     /* secondary text */
+  --color-mist: #060f1f;       /* app background (navy-950) */
+  --color-haze: #1a3358;       /* hairline borders on dark */
+  --color-card: #0c2039;       /* elevated surfaces (navy-850) */
 }
 
 @layer base {

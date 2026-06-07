@@ -436,6 +436,40 @@ class TestRAGChainUnit:
         assert result["grounded"] is True
         assert result["response"] == "Engine SpA answer"
 
+    def test_ambiguity_judge_skipped_for_single_source(self, chain):
+        """Bug fix: chunks from ONE source can't conflict → the judge (and its LLM call)
+        is skipped, so a genuine single-document answer is not wrongly gated."""
+        chain.vector_store.add_documents(
+            texts=["Il decreto A prevede X.", "Il decreto A specifica anche Y."],
+            metadatas=[{"source": "a.pdf"}, {"source": "a.pdf"}],
+        )
+        with patch.object(chain.client.chat.completions, "create",
+                          return_value=MOCK_ANSWER) as mock_create:
+            result = chain.query("cosa prevede il decreto A?")
+        assert result["ambiguous"] is False
+        assert result["grounded"] is True
+        assert result["response"] == "Engine SpA answer"
+        assert mock_create.call_count == 1  # only generation — conflict judge skipped
+
+    def test_ambiguity_discretion_cites_sources_with_role(self, chain):
+        """Bug fix: discretion must list the conflicting provvedimenti even for a
+        non-legal role (the old role-red template hid the sources)."""
+        from src.nextpulse.rag_chain import AMBIGUITY_MESSAGE
+
+        chain.vector_store.add_documents(
+            texts=["Il decreto A fissa il limite a 50.", "Il decreto B fissa il limite a 70."],
+            metadatas=[{"source": "a.pdf", "decreto": "100"},
+                       {"source": "b.pdf", "decreto": "200"}],
+        )
+        judge = MagicMock()
+        judge.choices = [MagicMock(message=MagicMock(content="CONFLITTO"))]
+        with patch.object(chain.client.chat.completions, "create", return_value=judge):
+            result = chain.query("quale limite si applica?", role="presales")
+        assert result["ambiguous"] is True
+        assert result["confidence"] == "red"
+        assert AMBIGUITY_MESSAGE in result["response"]
+        assert "a.pdf" in result["response"] and "b.pdf" in result["response"]
+
     # ── role-awareness integration ───────────────────────────────────────────
 
     def test_query_role_presales_cites_source(self, chain):

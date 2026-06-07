@@ -10,10 +10,15 @@ interface QueryResponse {
   grounded: boolean
   ambiguous: boolean
   top_score: number
+  role?: string | null
+  confidence?: string | null
+  pii_masked?: number | null
 }
 type ChatMessage = { role: 'user' | 'assistant'; content: string }
 
 const history: ChatMessage[] = []
+// Full turns (question + response) kept for the conversation export (RF16).
+const transcript: { q: string; r: QueryResponse }[] = []
 
 const SUGGESTIONS = [
   'Quali requisiti per l’omologazione degli autovelox?',
@@ -28,6 +33,28 @@ const ROLE_HINTS: Record<string, string> = {
   bid_manager: 'Conformità · riferimenti normativi · adempimenti',
 }
 let currentRole = localStorage.getItem('np_role') || 'presales'
+
+// Operator shown in the top-right profile chip. Change here to personalize.
+const USER_NAME = 'Edoardo Giammarco'
+
+// ── Theme (light/dark) ───────────────────────────────────────────────────────
+// Stored in localStorage; falls back to the OS preference on first visit.
+function preferredTheme(): 'light' | 'dark' {
+  const saved = localStorage.getItem('np_theme')
+  if (saved === 'light' || saved === 'dark') return saved
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+function applyTheme(theme: 'light' | 'dark') {
+  document.documentElement.classList.toggle('dark', theme === 'dark')
+  localStorage.setItem('np_theme', theme)
+  const btn = document.querySelector('#theme-btn')
+  if (btn) {
+    btn.innerHTML = theme === 'dark' ? ICONS.sun : ICONS.moon
+    btn.setAttribute('title', theme === 'dark' ? 'Passa al tema chiaro' : 'Passa al tema scuro')
+  }
+}
+// Apply before first paint to avoid a flash of the wrong theme.
+applyTheme(preferredTheme())
 
 // Opaque identifiers for the GDPR query log. They carry no PII themselves and are
 // NULLed server-side by the nightly anonymization job once past retention.
@@ -52,7 +79,23 @@ const ICONS = {
   file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/></svg>',
   user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5"><circle cx="12" cy="8" r="3.4"/><path d="M5.5 20c.6-3.3 3.2-5 6.5-5s5.9 1.7 6.5 5"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><path d="M5 12.5l4.5 4.5L19 7"/></svg>',
+  download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 21h14"/></svg>',
+  lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
+  quote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5"><path d="M7 7h4v4H7z"/><path d="M13 7h4v4h-4z"/><path d="M7 11c0 3-1 4-3 5"/><path d="M13 11c0 3-1 4-3 5"/></svg>',
+  info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.5h.01"/></svg>',
+  sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-[18px] w-[18px]"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+  moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-[18px] w-[18px]"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
 }
+
+// RF17 — declared system limits, surfaced in the UI (governance / "cosa NON fa").
+const LIMITS = [
+  'Risponde <b>solo</b> sulla documentazione aziendale indicizzata: nessuna conoscenza esterna.',
+  'Non garantisce prezzi, sconti o condizioni commerciali — vanno verificati con il Bid Manager.',
+  'In caso di fonti in conflitto non interpreta né decide: rimanda al Bid Manager (discrezione).',
+  'Non determina la vigenza o l’abrogazione di decreti e normative.',
+  'I dati possono essere sintetici o modificati: verifica sempre i dati critici (gare, offerte).',
+  'Non sostituisce il parere legale o tecnico ufficiale.',
+]
 
 const $ = <T extends HTMLElement>(s: string) => document.querySelector<T>(s)!
 const messages = () => $('#messages')
@@ -86,7 +129,7 @@ function render() {
         <div class="flex items-center gap-3">
           <div class="grid h-10 w-10 place-items-center rounded-xl bg-azure-500/15 text-azure-300 ring-1 ring-azure-400/30">${ICONS.pulse}</div>
           <div>
-            <div class="font-display text-[26px] leading-none tracking-tight">NextPulse</div>
+            <div class="font-display text-[26px] leading-none tracking-tight">ZENITA</div>
             <div class="mt-1.5 text-[10px] uppercase tracking-[0.2em] text-navy-300">Sales Assistant · Engine SpA</div>
           </div>
         </div>
@@ -108,7 +151,15 @@ function render() {
         <div id="suggestions" class="space-y-2"></div>
       </div>
 
-      <div class="reveal px-7 pb-7 pt-3" style="animation-delay:.22s">
+      <div class="reveal space-y-2 px-7 pb-7 pt-3" style="animation-delay:.22s">
+        <div class="flex gap-2">
+          <button id="export" class="group flex flex-1 items-center justify-center gap-2 rounded-xl bg-white/5 px-3 py-2.5 text-sm font-medium ring-1 ring-white/10 transition hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-white/5" title="Esporta la conversazione in Markdown">
+            ${ICONS.download}<span>Esporta</span>
+          </button>
+          <button id="limits-btn" class="group flex items-center justify-center gap-2 rounded-xl bg-white/5 px-3 py-2.5 text-sm font-medium ring-1 ring-white/10 transition hover:bg-white/10" title="Limiti del sistema">
+            ${ICONS.info}<span>Limiti</span>
+          </button>
+        </div>
         <button id="reset" class="group flex w-full items-center justify-center gap-2 rounded-xl bg-white/5 px-4 py-2.5 text-sm font-medium ring-1 ring-white/10 transition hover:bg-white/10">
           ${ICONS.reset}<span>Nuova conversazione</span>
         </button>
@@ -135,23 +186,24 @@ function render() {
           </div>
         </div>
         <p id="role-hint" class="hidden truncate text-[11px] leading-snug text-navy-300 sm:block"></p>
-      </div>
 
-      <header class="flex items-center gap-3 border-b border-haze bg-white/70 px-7 py-3.5 backdrop-blur">
-        <div class="grid h-8 w-8 place-items-center rounded-lg bg-navy-900 text-azure-300">${ICONS.shield}</div>
-        <div class="min-w-0">
-          <div class="text-sm font-semibold leading-tight">Assistente Pre-Sales</div>
-          <div class="text-[11px] text-slatev">Risposte grounded · fonti citate · governance attiva</div>
+        <div class="ml-auto flex shrink-0 items-center gap-2.5">
+          <button id="theme-btn" type="button" aria-label="Cambia tema"
+            class="grid h-9 w-9 place-items-center rounded-xl bg-white/[0.06] text-navy-200 ring-1 ring-white/10 transition hover:bg-white/[0.1] hover:text-white focus:outline-none focus:ring-2 focus:ring-azure-400/50"></button>
+          <div class="flex items-center gap-2.5 rounded-xl bg-white/[0.06] py-1.5 pl-1.5 pr-3 ring-1 ring-white/10">
+            <span class="grid h-7 w-7 place-items-center rounded-lg bg-azure-500/15 text-azure-300 ring-1 ring-azure-400/30">${ICONS.user}</span>
+            <div class="leading-tight">
+              <div class="text-[13px] font-medium text-white">${esc(USER_NAME)}</div>
+              <div class="text-[9.5px] uppercase tracking-[0.14em] text-navy-300">Engine SpA</div>
+            </div>
+          </div>
         </div>
-        <div class="ml-auto hidden items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200 sm:flex">
-          <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span> Operativo
-        </div>
-      </header>
+      </div>
 
       <div id="messages" class="flex-1 overflow-y-auto px-6 py-7"></div>
 
-      <div class="border-t border-haze bg-white/70 px-6 py-4 backdrop-blur">
-        <form id="form" class="mx-auto flex max-w-3xl items-center gap-2.5 rounded-2xl border border-haze bg-white px-3 py-2 shadow-sm transition focus-within:border-azure-400 focus-within:shadow-md focus-within:ring-4 focus-within:ring-azure-500/10">
+      <div class="border-t border-haze bg-card/70 px-6 py-4 backdrop-blur">
+        <form id="form" class="mx-auto flex max-w-3xl items-center gap-2.5 rounded-2xl border border-haze bg-card px-3 py-2 shadow-sm transition focus-within:border-azure-400 focus-within:shadow-md focus-within:ring-4 focus-within:ring-azure-500/10">
           <span class="pl-1 text-slatev">${ICONS.search}</span>
           <input id="input" autocomplete="off" placeholder="Chiedi su autovelox, ZTL, omologazioni, decreti…"
             class="flex-1 bg-transparent py-1.5 text-sm placeholder:text-slatev/60 focus:outline-none" />
@@ -160,6 +212,26 @@ function render() {
         <p class="mx-auto mt-2 max-w-3xl text-center text-[10.5px] text-slatev/80">Risponde solo sui documenti aziendali e cita le fonti · verifica sempre i dati critici.</p>
       </div>
     </main>
+
+    <!-- RF17 — LIMITI DEL SISTEMA (modal) -->
+    <div id="limits-modal" class="fixed inset-0 z-50 hidden items-center justify-center p-4">
+      <div id="limits-backdrop" class="absolute inset-0 bg-navy-950/60 backdrop-blur-sm"></div>
+      <div class="relative w-full max-w-lg overflow-hidden rounded-2xl border border-white/10 bg-navy-900 text-white shadow-2xl shadow-navy-950/70">
+        <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-azure-400 to-transparent"></div>
+        <div class="flex items-center gap-3 px-6 pt-6">
+          <div class="grid h-9 w-9 place-items-center rounded-xl bg-azure-500/15 text-azure-300 ring-1 ring-azure-400/30">${ICONS.shield}</div>
+          <div>
+            <div class="font-display text-lg leading-none">Limiti del sistema</div>
+            <div class="mt-1 text-[10px] uppercase tracking-[0.18em] text-navy-300">Governance · cosa NON fa</div>
+          </div>
+          <button id="limits-close" class="ml-auto grid h-8 w-8 place-items-center rounded-lg text-navy-300 transition hover:bg-white/10 hover:text-white" aria-label="Chiudi">✕</button>
+        </div>
+        <ul class="space-y-2.5 px-6 py-5 text-[13px] leading-relaxed text-navy-100">
+          ${LIMITS.map((l) => `<li class="flex gap-2.5"><span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-azure-400"></span><span>${l}</span></li>`).join('')}
+        </ul>
+        <div class="border-t border-white/10 bg-white/[0.03] px-6 py-3 text-[11px] text-navy-300">Trasparenza dichiarata · le fonti sono verificabili ma non garantite.</div>
+      </div>
+    </div>
   </div>`
 
   const sugg = $('#suggestions')
@@ -174,7 +246,31 @@ function render() {
     if (q) ask(q)
   })
   $('#reset').addEventListener('click', reset)
+  $('#export').addEventListener('click', exportConversation)
+
+  const modal = $('#limits-modal')
+  const toggleLimits = (open: boolean) => {
+    modal.classList.toggle('hidden', !open)
+    modal.classList.toggle('flex', open)
+  }
+  $('#limits-btn').addEventListener('click', () => toggleLimits(true))
+  $('#limits-close').addEventListener('click', () => toggleLimits(false))
+  $('#limits-backdrop').addEventListener('click', () => toggleLimits(false))
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') toggleLimits(false) })
+
+  $('#theme-btn').addEventListener('click', () => {
+    applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark')
+  })
+  applyTheme(preferredTheme())  // set the button icon now that it exists
+
+  updateExportState()
   greet()
+}
+
+// Enable the export button only once there is something to export.
+function updateExportState() {
+  const btn = $<HTMLButtonElement>('#export')
+  if (btn) btn.disabled = transcript.length === 0
 }
 
 function greet() {
@@ -197,7 +293,7 @@ function addUser(text: string) {
 function thinking(): HTMLElement {
   const node = el(`
     <div class="msg-in mx-auto mt-3 flex max-w-3xl">
-      <div class="flex items-center gap-2.5 rounded-2xl rounded-tl-md border border-haze bg-white px-4 py-3 text-sm text-slatev shadow-sm">
+      <div class="flex items-center gap-2.5 rounded-2xl rounded-tl-md border border-haze bg-card px-4 py-3 text-sm text-slatev shadow-sm">
         <span class="flex gap-1">
           <span class="dot h-1.5 w-1.5 rounded-full bg-navy-500" style="animation-delay:0s"></span>
           <span class="dot h-1.5 w-1.5 rounded-full bg-navy-500" style="animation-delay:.15s"></span>
@@ -220,7 +316,7 @@ function addAssistant(r: QueryResponse) {
   const pct = Math.max(6, Math.min(100, Math.round(((r.top_score - 0.7) / 0.25) * 100)))
   const sources = r.sources.length
     ? `<details class="group mt-3">
-         <summary class="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-navy-600 select-none">
+         <summary class="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-slatev select-none">
            ${ICONS.doc}<span>Fonti citate (${r.sources.length})</span>
            <span class="ml-0.5 text-slatev transition group-open:rotate-90">›</span>
          </summary>
@@ -229,18 +325,36 @@ function addAssistant(r: QueryResponse) {
          </ul>
        </details>`
     : ''
+  // RF14 — preview of the retrieved chunk excerpts (only when we actually grounded on them).
+  const excerpts = (r.context?.length && (r.grounded || r.ambiguous))
+    ? `<details class="group mt-2">
+         <summary class="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-slatev select-none">
+           ${ICONS.quote}<span>Estratti dai documenti (${r.context.length})</span>
+           <span class="ml-0.5 text-slatev transition group-open:rotate-90">›</span>
+         </summary>
+         <ul class="mt-2 space-y-2 border-l-2 border-haze pl-3">
+           ${r.context.map((c) => `<li class="rounded-lg bg-haze/40 px-2.5 py-2 text-[11.5px] leading-snug text-slatev">${esc(c.length > 320 ? c.slice(0, 320).trimEnd() + '…' : c)}</li>`).join('')}
+         </ul>
+       </details>`
+    : ''
+  // GDPR badge — PII entities pseudonymized locally before the prompt left the machine.
+  const piiBadge = (r.pii_masked ?? 0) > 0
+    ? `<span class="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 ring-1 ring-violet-200" title="Entità PII pseudonimizzate localmente prima dell'invio all'LLM (GDPR Art. 32)">${ICONS.lock} ${r.pii_masked} PII</span>`
+    : ''
   messages().appendChild(el(`
     <div class="msg-in mx-auto mt-3 flex max-w-3xl">
-      <div class="relative w-full max-w-[88%] overflow-hidden rounded-2xl rounded-tl-md border border-haze bg-white px-4 py-3.5 shadow-sm">
+      <div class="relative w-full max-w-[88%] overflow-hidden rounded-2xl rounded-tl-md border border-haze bg-card px-4 py-3.5 shadow-sm">
         <span class="absolute inset-y-0 left-0 w-[3px] ${st.bar}"></span>
         <div class="mb-1.5 flex items-center gap-2">
-          <span class="font-display text-sm font-semibold text-navy-800">Assistente</span>
+          <span class="font-display text-sm font-semibold text-ink">Assistente</span>
           <span class="rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ${st.pill}">${st.label}</span>
+          ${piiBadge}
           <span class="ml-auto font-mono text-[10px] text-slatev">conf ${r.top_score.toFixed(2)}</span>
         </div>
         <div class="whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink">${esc(r.response)}</div>
         <div class="meter mt-2.5 h-1 overflow-hidden rounded-full bg-haze"><span class="block h-full rounded-full ${st.meter}" style="width:${pct}%"></span></div>
         ${sources}
+        ${excerpts}
       </div>
     </div>`))
   scrollDown()
@@ -276,6 +390,8 @@ async function ask(question: string) {
     addAssistant(data)
     history.push({ role: 'user', content: question })
     history.push({ role: 'assistant', content: data.response })
+    transcript.push({ q: question, r: data })
+    updateExportState()
   } catch (e) {
     node.remove()
     addError(String(e))
@@ -287,7 +403,56 @@ async function ask(question: string) {
 
 function reset() {
   history.length = 0
+  transcript.length = 0
+  updateExportState()
   greet()
+}
+
+// RF16 — export the conversation (questions, answers, sources, governance) as Markdown,
+// a hand-off artifact for the Bid Manager. Fully client-side, no PII leaves the browser.
+function exportConversation() {
+  if (transcript.length === 0) return
+  const ts = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const stamp = `${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}-${pad(ts.getHours())}${pad(ts.getMinutes())}`
+  const roleName = $('#role-label')?.textContent?.trim() || currentRole
+  const model = $('.model-name')?.textContent?.trim() || ''
+
+  const lines: string[] = [
+    '# NextPulse — Conversazione',
+    '',
+    `- **Data:** ${ts.toLocaleString('it-IT')}`,
+    `- **Profilo:** ${roleName}`,
+    model ? `- **Modello:** ${model}` : '',
+    '',
+    '> Esportazione automatica dell’assistente RAG di Engine SpA. Le fonti sono verificabili',
+    '> ma non garantite: verifica i dati critici con il Bid Manager.',
+    '',
+    '---',
+    '',
+  ]
+  transcript.forEach(({ q, r }, i) => {
+    const stato = r.ambiguous ? 'Ambiguo (verifica fonti)' : r.grounded ? 'Grounded' : 'Fuori ambito'
+    lines.push(`## ${i + 1}. ${q}`, '')
+    lines.push(r.response, '')
+    lines.push(`*Stato: ${stato} · confidenza ${r.top_score.toFixed(2)}${(r.pii_masked ?? 0) > 0 ? ` · ${r.pii_masked} PII pseudonimizzate` : ''}*`, '')
+    if (r.sources.length) {
+      lines.push('**Fonti:**')
+      r.sources.forEach((s) => lines.push(`- ${s}`))
+      lines.push('')
+    }
+    lines.push('---', '')
+  })
+
+  const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `nextpulse-conversazione-${stamp}.md`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
 
 async function loadStatus() {

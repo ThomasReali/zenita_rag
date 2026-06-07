@@ -63,10 +63,13 @@ AMBIGUITY_MESSAGE = (
 
 # LLM judge: decides whether the retrieved passages conflict (one-word answer).
 CONFLICT_JUDGE_PROMPT = """\
-Sei un revisore normativo. Di seguito alcuni estratti recuperati per una domanda. Stabilisci se \
-contengono previsioni DIVERGENTI o IN CONTRASTO tra provvedimenti/fonti diverse, rilevanti per la \
-domanda (es. due decreti che dispongono cose diverse sullo stesso punto).
-Rispondi con UNA sola parola: CONFLITTO se c'è divergenza tra fonti diverse, altrimenti OK.
+Sei un revisore normativo rigoroso. Di seguito alcuni estratti recuperati per una domanda. \
+Stabilisci se contengono una CONTRADDIZIONE DIRETTA tra fonti diverse sullo stesso punto specifico \
+(es. due decreti che fissano valori, obblighi o scadenze DIVERSI per la stessa identica fattispecie).
+NON è un conflitto: informazioni complementari, dettagli aggiuntivi, ripetizioni dello stesso \
+contenuto, o estratti che trattano aspetti diversi dello stesso tema.
+Rispondi con UNA sola parola: CONFLITTO solo se c'è una contraddizione diretta tra fonti diverse, \
+altrimenti OK.
 
 DOMANDA: {query}
 
@@ -265,13 +268,17 @@ class RAGChain:
             grounded, ambiguous, confidence = False, False, "red"
             sources: List[str] = []
             response = rm.format_response("", [], "red") if rm else NO_CONTEXT_MESSAGE
-        elif (config.AMBIGUITY_JUDGE and len(docs) >= 2
+        elif (config.AMBIGUITY_JUDGE and distinct >= 2
               and self._detect_conflict(standalone_query, docs, metas, session=session)):
             # Gate 2 (ambiguity) — conflicting sources → discretion / defer to a human. (🔴)
+            # Only meaningful with ≥2 DISTINCT sources: chunks from one document cannot
+            # conflict across provvedimenti, so the judge (and its LLM call) is skipped.
             grounded, ambiguous, confidence = False, True, "red"
             sources = self._format_sources(metas)
-            response = (rm.format_response("", metas, "red") if rm
-                        else AMBIGUITY_MESSAGE + "\n\n" + self._ambiguity_block(metas))
+            # Discretion (RF19) is a distinct outcome from "no source": always cite the
+            # conflicting provvedimenti and defer to the Bid Manager, for EVERY role — the
+            # role-specific red template would otherwise hide the sources.
+            response = AMBIGUITY_MESSAGE + "\n\n" + self._ambiguity_block(metas)
         else:
             # Generate on labeled, cited context. 🟢 single source · 🟡 combined sources.
             grounded, ambiguous = True, False
