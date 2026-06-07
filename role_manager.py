@@ -136,7 +136,10 @@ rischio di non conformità e indica l'escalation (Ufficio Gare / consulenza lega
 class RoleConfig:
     name: str
     system_prompt: str
-    max_response_length: int                 # approximate token cap for the answer
+    max_response_length: int                 # safety ceiling for max_tokens (NOT a style target:
+                                             # brevity is driven by the system prompt). Generous
+                                             # enough to never truncate a normal answer mid-sentence,
+                                             # tight enough to cap runaway LLM cost.
     require_source_citation: bool            # True for Pre-Sales and Bid Manager
     terminology_level: TerminologyLevel
     emphasis: List[str] = field(default_factory=list)
@@ -149,7 +152,7 @@ ROLES: Dict[str, RoleConfig] = {
     "sales": RoleConfig(
         name="Sales",
         system_prompt=SALES_SYSTEM_PROMPT,
-        max_response_length=140,
+        max_response_length=400,
         require_source_citation=False,
         terminology_level="client",
         emphasis=["impatto operativo", "casi d'uso", "benefici", "referenze simili"],
@@ -158,7 +161,7 @@ ROLES: Dict[str, RoleConfig] = {
     "presales": RoleConfig(
         name="Pre-Sales",
         system_prompt=PRESALES_SYSTEM_PROMPT,
-        max_response_length=380,
+        max_response_length=900,
         require_source_citation=True,
         terminology_level="technical",
         emphasis=["parametri tecnici", "vincoli di prodotto", "compatibilità", "limitazioni note"],
@@ -167,7 +170,7 @@ ROLES: Dict[str, RoleConfig] = {
     "bid_manager": RoleConfig(
         name="Bid Manager",
         system_prompt=BID_MANAGER_SYSTEM_PROMPT,
-        max_response_length=460,
+        max_response_length=1100,
         require_source_citation=True,
         terminology_level="legal",
         emphasis=["riferimenti normativi", "adempimenti obbligatori", "rischi di non conformità"],
