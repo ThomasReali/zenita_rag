@@ -36,10 +36,15 @@ REGOLE FONDAMENTALI (Pena fallimento della gara):
 DEVI dire: "Questa informazione non è presente nella documentazione tecnica \
 attuale. Ti suggerisco di contattare il Bid Manager." Non inventare prezzi, \
 normative o sigle.
-3. TONE OF VOICE: Professionale, sintetico, strutturato (usa elenchi puntati).
-4. CITAZIONI: Cita SEMPRE la fonte di ogni informazione usando l'etichetta [Fonte: ...] \
-che precede ciascun documento qui sotto (con pagina/articolo se presenti) ed elenca le \
-fonti utilizzate alla fine della risposta.
+3. TONE OF VOICE: Professionale, sintetico, strutturato (usa elenchi puntati). ADATTA il \
+registro alla domanda: a una domanda GENERICA o introduttiva rispondi in modo chiaro e \
+discorsivo (inquadramento generale), senza appesantire con decreti, articoli o sigle se \
+non servono.
+4. CITAZIONI: Cita la fonte con l'etichetta [Fonte: ...] (con pagina/articolo se presenti) \
+quando fornisci un DATO SPECIFICO (parametro tecnico, valore, requisito, riferimento \
+normativo puntuale) oppure quando l'utente lo chiede; in tal caso elenca le fonti usate alla \
+fine. NON forzare riferimenti a decreti/normative su domande generiche se l'utente non li \
+ha richiesti. Resta comunque vincolato alla regola 1 (solo informazioni dai documenti).
 
 DOCUMENTI AZIENDALI:
 {context_str}
@@ -59,6 +64,16 @@ AMBIGUITY_MESSAGE = (
     "Su questo punto risultano più provvedimenti potenzialmente rilevanti, con possibili "
     "differenze. Per evitare interpretazioni errate non fornisco una sintesi definitiva: "
     "consulta le fonti qui sotto e verifica con il Bid Manager quale si applichi."
+)
+
+# Deterministic abrogation notice (no LLM): the most relevant provvedimento exists but the
+# audit flagged it OBSOLETE. Instead of "non lo so", surface that it was superseded, with the
+# replacing decree taken straight from metadata — exactly the behaviour the PA sale needs.
+OBSOLETE_MESSAGE = (
+    "Il provvedimento più pertinente alla tua domanda risulta ABROGATO o superato e "
+    "NON è più in vigore: per questo non lo utilizzo per rispondere. Di seguito i "
+    "riferimenti e l'eventuale provvedimento sostitutivo — verifica con il Bid Manager "
+    "quale norma si applichi oggi."
 )
 
 # LLM judge: decides whether the retrieved passages conflict (one-word answer).
@@ -124,11 +139,20 @@ class RAGChain:
     # ── retrieval ────────────────────────────────────────────────────────────
 
     def retrieve(
-        self, query: str, k: Optional[int] = None
+        self, query: str, k: Optional[int] = None, *, apply_status_filter: bool = True
     ) -> Tuple[List[str], List[dict], List[float], float]:
-        """Retrieve relevant chunks; returns (texts, metadatas, rrf_scores, max_cosine)"""
+        """Retrieve relevant chunks; returns (texts, metadatas, rrf_scores, max_cosine).
+
+        By default the deterministic status filter hides chunks the obsolescence/poisoning
+        audit flagged (config.EXCLUDED_STATUSES). Pass apply_status_filter=False for the
+        second pass that builds the abrogation notice (it needs to *see* the obsolete chunk)."""
         k = k or config.RETRIEVAL_K
-        return self.vector_store.search(query, k=k)
+        exclude = (
+            config.EXCLUDED_STATUSES
+            if (apply_status_filter and config.STATUS_FILTER_ENABLED)
+            else ()
+        )
+        return self.vector_store.search(query, k=k, exclude_status=exclude)
 
     # ── citation helpers ──────────────────────────────────────────────────────
 
@@ -179,6 +203,55 @@ class RAGChain:
                 tag += f" (pag. {m['page']})"
             lines.append(f"• {tag}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _obsolete_block(metas: List[dict]) -> str:
+        """Bulleted list of the OBSOLETE provvedimenti, built purely from metadata.
+
+        Only `status == "obsolete"` is surfaced: a superseded law is informative
+        ("abrogato da Z"). `poisoned`/`draft` chunks are deliberately NOT listed —
+        they stay invisible and fall through to the generic refusal."""
+        seen, lines = set(), []
+        for m in metas:
+            if m.get("status") != "obsolete":
+                continue
+            src = str(m.get("source", "?"))
+            if src in seen:
+                continue
+            seen.add(src)
+            tag = src
+            if m.get("decreto"):
+                tag += f", decreto {m['decreto']}"
+            if m.get("data_decreto"):
+                tag += f" del {m['data_decreto']}"
+            extra = []
+            if m.get("validity_end"):
+                extra.append(f"in vigore fino al {m['validity_end']}")
+            if m.get("replaced_by"):
+                extra.append(f"sostituito da {m['replaced_by']}")
+            if extra:
+                tag += f" ({'; '.join(extra)})"
+            lines.append(f"• {tag}")
+        return "\n".join(lines)
+
+    def _obsolete_notice(
+        self, standalone_query: str, k: Optional[int]
+    ) -> Optional[Tuple[str, List[str]]]:
+        """When the filtered retrieval found nothing relevant, check whether the best
+        UNFILTERED match is an obsolete provvedimento. If so, return a deterministic
+        (no-LLM) abrogation notice + its source labels; otherwise None (generic refusal)."""
+        if not config.OBSOLETE_NOTICE_ENABLED:
+            return None
+        docs, metas, _scores, top_score = self.retrieve(
+            standalone_query, k=k, apply_status_filter=False
+        )
+        if not docs or top_score < config.SCORE_THRESHOLD:
+            return None
+        block = self._obsolete_block(metas)
+        if not block:
+            return None  # the relevant hidden chunk is poisoned/draft, not obsolete
+        flagged = [m for m in metas if m.get("status") == "obsolete"]
+        return OBSOLETE_MESSAGE + "\n\n" + block, self._format_sources(flagged)
 
     def _detect_conflict(self, standalone_query: str, docs: List[str], metas: List[dict],
                          session=None) -> bool:
@@ -272,12 +345,21 @@ class RAGChain:
         # Step 2 — retrieve (hybrid); gate on dense cosine (stable scale)
         docs, metas, scores, top_score = self.retrieve(standalone_query, k=k)
         distinct = len({str(m.get("source")) for m in metas}) if metas else 0
+        obsolete = False
 
         if not docs or top_score < config.SCORE_THRESHOLD:
-            # Gate 1 (RF10) — nothing relevant → deterministic refusal, no generation. (🔴)
-            grounded, ambiguous, confidence = False, False, "red"
-            sources: List[str] = []
-            response = rm.format_response("", [], "red") if rm else self.no_context_message
+            # Gate 1 (RF10) — nothing relevant among the *current* (active) documents.
+            # Before refusing, run the deterministic obsolescence check: if the only
+            # relevant match was hidden because it is ABROGATO, say so (with the
+            # replacing decree) instead of "non lo so". (🔴)
+            notice = self._obsolete_notice(standalone_query, k)
+            if notice is not None:
+                response, sources = notice
+                grounded, ambiguous, confidence, obsolete = False, False, "red", True
+            else:
+                grounded, ambiguous, confidence = False, False, "red"
+                sources: List[str] = []
+                response = rm.format_response("", [], "red") if rm else self.no_context_message
         elif (config.AMBIGUITY_JUDGE and distinct >= 2
               and self._detect_conflict(standalone_query, docs, metas, session=session)):
             # Gate 2 (ambiguity) — conflicting sources → discretion / defer to a human. (🔴)
@@ -322,6 +404,7 @@ class RAGChain:
             "model": self.model,
             "grounded": grounded,
             "ambiguous": ambiguous,
+            "obsolete": obsolete,
             "top_score": top_score,
             "role": rm.current_key if rm else None,
             "confidence": confidence,
@@ -329,8 +412,8 @@ class RAGChain:
             "latency_ms": latency_ms,
         }
         logger.info(
-            "query role=%s grounded=%s ambiguous=%s confidence=%s top_score=%.3f sources=%d pii_masked=%d latency_ms=%d",
-            result["role"], grounded, ambiguous, confidence, top_score, len(sources),
+            "query role=%s grounded=%s ambiguous=%s obsolete=%s confidence=%s top_score=%.3f sources=%d pii_masked=%d latency_ms=%d",
+            result["role"], grounded, ambiguous, obsolete, confidence, top_score, len(sources),
             result["pii_masked"], result["latency_ms"],
         )
         return result

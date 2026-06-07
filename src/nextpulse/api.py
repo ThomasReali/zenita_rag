@@ -29,10 +29,10 @@ from src.nextpulse import config  # noqa: E402
 from src.nextpulse.rag_chain import RAGChain  # noqa: E402
 from src.nextpulse.query_log import QueryLog  # noqa: E402
 from src.nextpulse.vector_store import VectorStore  # noqa: E402
-from src.nextpulse.ram_scraper import (  # noqa: E402
+from src.nextpulse.bandi_scraper import (  # noqa: E402
     BANDI_COLLECTION,
     CATEGORY_LABELS,
-    RamScraper,
+    PortaleAppaltiScraper,
 )
 try:
     from role_manager import ROLES  # noqa: E402
@@ -51,11 +51,12 @@ MAX_MESSAGE_CHARS = 8000      # per chat-history message
 MAX_HISTORY_MESSAGES = 20     # bound conversational-memory size (token/cost guard)
 MAX_ID_CHARS = 200            # opaque session/user identifiers
 
-# ── Bandi/gare (RAM) chatbot — domain-specific grounding prompt ──────────────────
+# ── Bandi/gare (Portale Appalti MIT) chatbot — domain-specific grounding prompt ──
 BANDI_SYSTEM_PROMPT = """\
-Sei un assistente specializzato nelle gare d'appalto di R.A.M. Logistica \
-Infrastrutture e Trasporti S.p.A. Supporti l'ufficio gare a capire requisiti, \
-scadenze, importi e condizioni dei bandi pubblicati sul portale acquisti RAM.
+Sei un assistente specializzato nelle gare d'appalto del Ministero delle \
+Infrastrutture e dei Trasporti (Portale Appalti MIT). Supporti l'ufficio gare a \
+capire requisiti, scadenze, importi e condizioni dei bandi pubblicati sul portale \
+(stato «In corso» e «In aggiudicazione»).
 
 REGOLE FONDAMENTALI:
 1. GROUNDING: Rispondi ESCLUSIVAMENTE con le informazioni presenti nei \
@@ -137,6 +138,7 @@ class QueryResponse(BaseModel):
     model: str
     grounded: bool
     ambiguous: bool
+    obsolete: bool = False  # provvedimento pertinente trovato ma ABROGATO (avviso deterministico)
     top_score: float
     role: Optional[str] = None
     confidence: Optional[str] = None
@@ -238,7 +240,7 @@ def query(req: QueryRequest):
     return result
 
 
-# ── Bandi / Gare d'Appalto (R.A.M.) ──────────────────────────────────────────────
+# ── Bandi / Gare d'Appalto (Portale Appalti MIT) ─────────────────────────────────
 
 class BandiQueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=MAX_QUESTION_CHARS)
@@ -268,7 +270,7 @@ def bandi_list():
 
 @app.get("/api/bandi/scrape")
 async def bandi_scrape():
-    """Scrape RAM bandi (in corso + aggiudicazione), index them, and stream progress.
+    """Scrape MIT bandi (in corso + aggiudicazione), index them, and stream progress.
 
     Server-Sent Events: each line is `data: {json}` with a `phase` field
     (`listing` | `tender` | `done` | `error`). The UI shows a live spinner/progress
@@ -283,7 +285,7 @@ async def bandi_scrape():
         # Serialize against the bandi chatbot's reads on the embedded Qdrant collection.
         with lock:
             try:
-                scraper = RamScraper(vector_store=vs)
+                scraper = PortaleAppaltiScraper(vector_store=vs)
                 holder["results"] = scraper.ingest(progress=q.put)
             except Exception as exc:  # surface a clean error event to the stream
                 logger.exception("bandi scrape failed")
@@ -311,7 +313,7 @@ async def bandi_scrape():
 
 @app.post("/api/bandi/query", response_model=QueryResponse)
 def bandi_query(req: BandiQueryRequest):
-    """RAG chatbot scoped to the scraped RAM bandi corpus."""
+    """RAG chatbot scoped to the scraped MIT bandi corpus."""
     try:
         rag = _bandi_rag(app)
     except ValueError as exc:  # missing LLM API key

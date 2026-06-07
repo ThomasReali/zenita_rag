@@ -141,11 +141,11 @@ function render() {
       <nav class="reveal px-5 py-4" style="animation-delay:.06s">
         <button id="nav-chat" data-view="chat" class="nav-item group mb-1.5 flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium text-white/90 transition">
           <span class="nav-ico grid h-7 w-7 place-items-center rounded-lg bg-white/[0.06] text-azure-300 ring-1 ring-white/10">${ICONS.pulse}</span>
-          <span>Assistente Pre-Sales</span>
+          <span id="nav-chat-label">Assistente Pre-Sales</span>
         </button>
         <button id="nav-bandi" data-view="bandi" class="nav-item group flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium text-white/90 transition">
           <span class="nav-ico grid h-7 w-7 place-items-center rounded-lg bg-white/[0.06] text-azure-300 ring-1 ring-white/10">${ICONS.search}</span>
-          <span>Gare d'Appalto · R.A.M.</span>
+          <span>Gare d'Appalto · MIT</span>
         </button>
       </nav>
 
@@ -228,7 +228,7 @@ function render() {
       </div>
     </main>
 
-    <!-- GARE D'APPALTO (R.A.M.) — separate section, initialized lazily -->
+    <!-- GARE D'APPALTO (Portale Appalti MIT) — separate section, initialized lazily -->
     <main id="bandi-main" class="relative hidden min-w-0 flex-1 flex-col"></main>
 
     <!-- RF17 — LIMITI DEL SISTEMA (modal) -->
@@ -281,7 +281,7 @@ function render() {
   })
   applyTheme(preferredTheme())  // set the button icon now that it exists
 
-  // View switch: sales assistant chat ↔ Gare d'Appalto (R.A.M.) section.
+  // View switch: sales assistant chat ↔ Gare d'Appalto (Portale Appalti MIT) section.
   $('#nav-chat').addEventListener('click', () => showView('chat'))
   $('#nav-bandi').addEventListener('click', () => showView('bandi'))
   showView('chat')
@@ -602,8 +602,10 @@ async function loadRoles() {
       </li>`)
     .join('')
 
+  const navLabel = $('#nav-chat-label')
   const paint = () => {
     label.textContent = nameOf(currentRole)
+    navLabel.textContent = `Assistente ${nameOf(currentRole)}`
     hint.textContent = ROLE_HINTS[currentRole] ?? ''
     list.querySelectorAll<HTMLElement>('[data-role]').forEach((opt) => {
       const active = opt.dataset.role === currentRole

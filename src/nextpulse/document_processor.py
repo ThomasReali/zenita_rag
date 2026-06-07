@@ -318,8 +318,17 @@ class DocumentProcessor:
         base = {
             "source": Path(file_path).name,
             "doc_type": suffix.lstrip("."),
+            # Governance: a freshly ingested document is "active" (in vigore). The
+            # deterministic audit (scripts/audit_obsolescence.py) flips this to
+            # obsolete/poisoned later — never the ingestion, never the LLM.
+            "status": "active",
             **self._doc_metadata(file_path),
         }
+        # validity_start defaults to the decree date when we could extract it (invariant
+        # #4: only real, extracted data — never invented). validity_end stays unset until
+        # the audit proves an abrogation.
+        if base.get("data_decreto"):
+            base.setdefault("validity_start", base["data_decreto"])
 
         if suffix in (".csv", ".xlsx"):
             chunks = [(t, {}) for t in self._chunk_table(file_path)]

@@ -1,0 +1,10 @@
+source,status,replaced_by,validity_end,reason
+# Master file di esempio per scripts/audit_obsolescence.py (fonte primaria, deterministica).
+# Copialo in data/_governance/obsolescence.csv (o imposta GOVERNANCE_MASTER_FILE).
+# - source: nome file esatto del documento indicizzato (campo `source` del chunk)
+# - status: active | obsolete | poisoned | draft
+# - replaced_by / validity_end: usati per l'avviso "abrogato" (solo per status=obsolete)
+# - reason: nota di audit (finisce nel governance_log immutabile)
+Vecchio Codice della Strada.pdf,obsolete,Nuovo Codice della Strada.pdf,1992-12-31,abrogato_da_nuovo_cds
+decreto_falso_2023.pdf,poisoned,,,documento_non_autentico_segnalato
+bozza_linee_guida_ZTL.pdf,draft,,,bozza_non_ancora_in_vigore

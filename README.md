@@ -99,21 +99,25 @@ GDPR** (audit log + anonimizzazione notturna + **pseudonimizzazione reversibile 
 **UI FastAPI + frontend Vite/TS/Tailwind**, **hardening** (indicizzazione incrementale, retry, logging) e
 **69 test**. *(Rinviato: OCR scansioni — serve il language pack `ita`.)*
 
-### Sezione Gare d'Appalto (R.A.M.) — scraping live + RAG dedicato
+### Sezione Gare d'Appalto (Portale Appalti MIT) — scraping live + RAG dedicato
 Sezione separata dal chatbot principale (switch nella command rail). All'apertura esegue lo
-**scraping live** del portale acquisti di *R.A.M. Logistica Infrastrutture e Trasporti S.p.A.*
-(`ramspa.acquistitelematici.it`) e mostra una **rotellina di caricamento con avanzamento**
-man mano che ogni bando viene indicizzato.
+**scraping live** del *Portale Appalti del Ministero delle Infrastrutture e dei Trasporti*
+(`portaleappalti.mit.gov.it`) per i bandi in stato **«In corso»** e **«In aggiudicazione»**,
+mostrando una **rotellina di caricamento con avanzamento** man mano che ogni bando è indicizzato.
 
 ```
-GET /ws/tender/fe (JSON) → bandi → categorizza per stato (in corso / aggiudicazione)
-   → per bando: detail page → seleziona doc con i requisiti (disciplinare/capitolato/bando/esito)
-   → download PDF → chunking strutturale (DocumentProcessor) → embed → Qdrant (collezione `bandi_ram`)
+sblocca Friendly Captcha (proof-of-work BLAKE2b) → listAllBandi per stato (in corso / aggiudicazione)
+   → per bando: scheda (view.action) → seleziona doc con i requisiti (disciplinare/capitolato/bando/esito)
+   → download PDF → chunking strutturale (DocumentProcessor) → embed → Qdrant (collezione `bandi_mit`)
    → estrazione euristica dei REQUISITI di partecipazione → SSE di avanzamento alla UI
 ```
 
-- **Scraper**: `src/nextpulse/ram_scraper.py` (anche CLI headless: `python scripts/ingest_ram.py`).
-- **Collezione dedicata** `bandi_ram` (separata dalla KB aziendale), che riusa client Qdrant ed
+- **Scraper**: `src/nextpulse/bandi_scraper.py` (anche CLI headless: `python scripts/ingest_bandi.py`).
+  Il portale protegge le schede con un **Friendly Captcha** (proof-of-work) risolto localmente in
+  Python con `hashlib.blake2b`; le schede sono rese solo per il locale `it`. Per non scaricare
+  centinaia di gare in aggiudicazione, l'ingest applica un **cap configurabile per categoria**
+  (`ingest(max_per_category=…)`, default 60, le più recenti).
+- **Collezione dedicata** `bandi_mit` (separata dalla KB aziendale), che riusa client Qdrant ed
   embedder della store principale (l'embedded Qdrant blocca la cartella per processo).
 - **Requisiti evidenziati** per ogni bando nelle card + chunk sintetico “Requisiti” recuperabile.
 - **Chatbot dedicato** alle gare, *grounded* solo sui documenti di gara indicizzati, con citazioni.

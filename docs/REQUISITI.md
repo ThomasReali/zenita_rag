@@ -1,6 +1,6 @@
 # NextPulse — Documento dei Requisiti
 
-> **Stato:** bozza riveduta (rev. 4 — modulo Bandi/Gare R.A.M. + hardening sicurezza API) · **Data:** 2026-06-07 · **Owner:** team NextPulse
+> **Stato:** bozza riveduta (rev. 4 — modulo Bandi/Gare MIT + hardening sicurezza API) · **Data:** 2026-06-07 · **Owner:** team NextPulse
 > Documento di lavoro interno. Descrive **cosa** deve fare l'AI Sales Assistant per Engine SpA
 > e i casi d'uso che deve coprire. Compagno di [MODELLO_DATI.md](./MODELLO_DATI.md) (com'è
 > strutturato il dato — **unica fonte di verità per la configurazione**) e [BRIEF.md](./BRIEF.md)
@@ -101,30 +101,40 @@ della challenge (Anceschi, Pastore, Guida) come fonte di requisiti via discovery
   risposta (elaborazione *zero-knowledge*). Backend regex sempre attivo, **Microsoft Presidio** (NER) opzionale.
   *(modulo `pseudonymizer.py`; mappa effimera distrutta a fine richiesta; campo `pii_masked` nel `QueryResult`)*
 
-### RF — Bandi / Gare d'appalto (modulo R.A.M.)
+### RF — Bandi / Gare d'appalto (modulo Portale Appalti MIT)
 > Modulo aggiuntivo e **autonomo** rispetto alla KB Engine SpA: assiste l'**Ufficio Gare** di
-> R.A.M. (Logistica Infrastrutture e Trasporti S.p.A.) a leggere requisiti, scadenze, importi e
-> condizioni dei bandi pubblicati sul portale e-procurement RAM. Corpus tenuto **separato** dalla
+> del Ministero delle Infrastrutture e dei Trasporti a leggere requisiti, scadenze, importi e
+> condizioni dei bandi pubblicati sul Portale Appalti MIT (stato «In corso» e «In aggiudicazione»). Corpus tenuto **separato** dalla
 > documentazione aziendale (collection Qdrant dedicata) così i due domini non si mescolano mai.
 
-- **RF24** **Scraping & ingestion bandi:** estrarre i bandi dal portale e-procurement RAM
+- **RF24** **Scraping & ingestion bandi:** estrarre i bandi dal Portale Appalti MIT (stato «In corso» e «In aggiudicazione»)
   (web service JSON), **categorizzarli** in *Bandi in corso* / *Bandi in aggiudicazione* (mappatura
   dallo `stato` del portale), scaricare per ogni bando **solo** i documenti che portano requisiti
   (disciplinare, capitolato, bando, esito/verbale — boilerplate come DGUE/privacy/modello-offerta
   scartati; max 4 doc/bando), riusare lo stesso chunking strutturale a token e **indicizzare** in una
-  **collection Qdrant dedicata** (`bandi_ram`, separata da `documents`). Re-index **idempotente** (drop
-  delle source del bando prima del re-insert). *(`src/nextpulse/ram_scraper.py`; `scripts/ingest_ram.py`)*
+  **collection Qdrant dedicata** (`bandi_mit`, separata da `documents`). Re-index **idempotente** (drop
+  delle source del bando prima del re-insert). *(`src/nextpulse/bandi_scraper.py`; `scripts/ingest_bandi.py`)*
 - **RF25** **Estrazione requisiti di partecipazione:** per ogni bando, euristica che individua il
   blocco "requisiti …" (idoneità professionale / capacità economico-finanziaria / tecnico-professionale /
   ordine generale) e ne ricava un elenco; viene creato un **chunk sintetico "Requisiti (estratti)"**
   recuperabile, così il chatbot li può esporre anche quando sono sparsi su più PDF.
 - **RF26** **Chatbot bandi grounded:** chatbot RAG **ristretto al solo corpus bandi** (system prompt
-  dedicato alle gare RAM; fallback esplicito "informazione non presente nei documenti di gara
+  dedicato alle gare MIT; fallback esplicito "informazione non presente nei documenti di gara
   indicizzati"). Riusa l'intera pipeline RAG (retrieval hybrid, gate, citazioni). *(`POST /api/bandi/query`)*
 - **RF27** **Avanzamento scraping in tempo reale (SSE):** l'operazione di scraping emette eventi di
   progresso (`listing`/`tender`/`done`/`error`) via **Server-Sent Events**; la UI mostra spinner +
   avanzamento live e renderizza ogni bando man mano che viene indicizzato. *(`GET /api/bandi/scrape`,
   `GET /api/bandi`; frontend `web/src/bandi.ts`)*
+- **RF28** **Governance obsolescenza & data-poisoning (audit DETERMINISTICO, no-LLM):** ogni chunk porta
+  uno `status` (`active`/`obsolete`/`poisoned`/`draft`). Il retrieval lo filtra in modo deterministico
+  (`must_not` su `EXCLUDED_STATUSES`, back-compatible coi chunk legacy senza status). Se il match più
+  pertinente è **abrogato**, la chain restituisce un **avviso costruito dai metadati** (`replaced_by`/
+  `validity_end`) invece del generico "non lo so" (`obsolete=true`, no LLM). Un **job notturno ibrido**
+  (`scripts/audit_obsolescence.py`: master file gestionale + Normattiva best-effort/Fase 2) flippa lo
+  `status` via `set_payload` (nessun re-embedding); la **quarantena anti-poisoning**
+  (`scripts/quarantine_source.py`) nasconde (`poisoned`) o **elimina fisicamente** (`--delete`, per il
+  diritto all'oblio GDPR Art. 17). Ogni cambio è tracciato in un **log immutabile** (`governance_log.py`,
+  NIS2). *(`src/nextpulse/{vector_store,rag_chain,governance_log}.py`)*
 
 ## 4. Requisiti non funzionali
 
@@ -184,8 +194,8 @@ della challenge (Anceschi, Pastore, Guida) come fonte di requisiti via discovery
 - **Esito:** nuovi chunk disponibili alla query; conteggio KB aggiornato in UI.
 - **Edge:** file corrotto/non supportato → skippato con log, ingestion prosegue (RNF5).
 
-### UC7 — Bandi/gare R.A.M.: scraping e interrogazione (modulo bandi)
-- **Attore:** Ufficio Gare (R.A.M.). **Pre:** portale e-procurement raggiungibile.
+### UC7 — Bandi/gare MIT: scraping e interrogazione (modulo bandi)
+- **Attore:** Ufficio Gare. **Pre:** Portale Appalti MIT raggiungibile.
 - **Flusso:** avvia lo scraping dei bandi → vede l'avanzamento live (SSE) e i bandi indicizzati
   raggruppati (in corso / aggiudicazione) → chiede "quali sono i requisiti di partecipazione del
   bando X?" → retrieval sul corpus bandi → risposta con requisiti + fonte (CIG/bando).
@@ -221,8 +231,9 @@ della challenge (Anceschi, Pastore, Guida) come fonte di requisiti via discovery
 | RF20 | UC1, UC3 | extra | ✅ fatto (3 profili + selettore UI + `confidence`; `role_manager.py`) |
 | RF21, RF22 | tutti | extra | ✅ fatto (query log SQLite + job notturno di anonimizzazione GDPR; `/api/privacy`) |
 | RF23 | tutti | extra | ✅ fatto (pseudonimizzazione reversibile PII; backend regex + Presidio opzionale) |
-| RF24, RF25 | UC7 | bandi | ✅ fatto (scraper RAM + collection `bandi_ram` + estrazione requisiti; `ram_scraper.py`) |
+| RF24, RF25 | UC7 | bandi | ✅ fatto (scraper Portale Appalti MIT + collection `bandi_mit` + estrazione requisiti; `bandi_scraper.py`) |
 | RF26, RF27 | UC7 | bandi | ✅ fatto (chatbot bandi grounded `/api/bandi/query` + scraping SSE `/api/bandi/scrape`) |
+| RF28 | UC4, UC5 | extra | ✅ fatto (audit obsolescenza/poisoning **deterministico**: filtro `status`, avviso "abrogato" no-LLM, job ibrido + quarantena, `governance_log` NIS2) |
 | RNF6 | tutti | sicurezza | ✅ fatto (validazione input → 422, no leak errori; rate-limit/auth ruolo in backlog) |
 
 ## 8. Assunzioni & rischi aperti

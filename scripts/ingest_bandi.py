@@ -1,13 +1,14 @@
-"""R.A.M. bandi/gare → Qdrant ingestion CLI (mirrors ingest_mit.py).
+"""Portale Appalti MIT bandi/gare → Qdrant ingestion CLI.
 
-Scrapes the R.A.M. Logistica Infrastrutture e Trasporti SpA procurement portal
-(bandi in corso + in aggiudicazione), chunks the requirement-bearing documents and
-indexes them into the dedicated bandi Qdrant collection — the same pipeline the UI
-drives via /api/bandi/scrape, runnable headless for ops / scheduled re-indexing.
+Scrapes the Ministero delle Infrastrutture e dei Trasporti procurement portal
+(bandi «In corso» + «In aggiudicazione»), solves the Friendly Captcha gate, chunks the
+requirement-bearing documents and indexes them into the dedicated bandi Qdrant collection
+— the same pipeline the UI drives via /api/bandi/scrape, runnable headless for ops /
+scheduled re-indexing.
 
 Usage:
-    python scripts/ingest_ram.py            # full run, prints live progress
-    python scripts/ingest_ram.py --quiet    # only the final summary
+    python scripts/ingest_bandi.py            # full run, prints live progress
+    python scripts/ingest_bandi.py --quiet    # only the final summary
 
 NOTE: the embedded Qdrant locks its storage folder per process — stop the API server
 (or point QDRANT_URL at a Qdrant server) before running this against the same data dir.
@@ -21,9 +22,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.nextpulse.ram_scraper import CATEGORY_LABELS, RamScraper
+from src.nextpulse.bandi_scraper import CATEGORY_LABELS, PortaleAppaltiScraper
 
-logger = logging.getLogger("ram_ingestion")
+logger = logging.getLogger("bandi_ingestion")
 
 
 def _progress(event: dict) -> None:
@@ -48,7 +49,7 @@ def _progress(event: dict) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Scrape + index R.A.M. bandi into Qdrant.")
+    p = argparse.ArgumentParser(description="Scrape + index Portale Appalti MIT bandi into Qdrant.")
     p.add_argument("--quiet", action="store_true", help="Only log the final summary.")
     args = p.parse_args()
 
@@ -58,7 +59,7 @@ def main() -> None:
         level=logging.WARNING if args.quiet else logging.INFO,
     )
 
-    scraper = RamScraper()
+    scraper = PortaleAppaltiScraper()
     results = scraper.ingest(progress=None if args.quiet else _progress)
 
     total_chunks = sum(t.get("chunks", 0) for t in results)

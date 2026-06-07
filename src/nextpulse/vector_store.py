@@ -90,31 +90,45 @@ class VectorStore:
                 if sparse is not None:
                     vector[_SPARSE] = sparse
                 points.append(
-                    models.PointStruct(id=pid, vector=vector, payload={**meta, _TEXT_KEY: txt})
+                    models.PointStruct(
+                        id=pid, vector=vector,
+                        # Governance default: every chunk is born "active" unless the caller
+                        # says otherwise. Legacy points predating this field stay filter-safe
+                        # (the retrieval filter excludes known-bad statuses, not missing ones).
+                        payload={"status": "active", **meta, _TEXT_KEY: txt},
+                    )
                 )
             self.client.upsert(collection_name=self.collection_name, points=points)
 
-    def _query_filter(self, where: Optional[dict]):
-        if not where:
+    def _query_filter(self, where: Optional[dict] = None, exclude_status: Tuple[str, ...] = ()):
+        """Build a Qdrant payload filter: `where` → equality (must); `exclude_status` →
+        must_not on `status`. Excluding by status (rather than requiring status="active")
+        keeps legacy points without a status field visible — back-compatible, no re-index."""
+        must = [
+            models.FieldCondition(key=key, match=models.MatchValue(value=value))
+            for key, value in (where or {}).items()
+        ]
+        must_not = [
+            models.FieldCondition(key="status", match=models.MatchValue(value=s))
+            for s in exclude_status
+        ]
+        if not must and not must_not:
             return None
-        return models.Filter(
-            must=[
-                models.FieldCondition(key=key, match=models.MatchValue(value=value))
-                for key, value in where.items()
-            ]
-        )
+        return models.Filter(must=must or None, must_not=must_not or None)
 
     def search(
-        self, query: str, k: Optional[int] = None, where: Optional[dict] = None
+        self, query: str, k: Optional[int] = None, where: Optional[dict] = None,
+        exclude_status: Tuple[str, ...] = (),
     ) -> Tuple[List[str], List[dict], List[float], float]:
         """Hybrid (dense + BM25) retrieval with RRF fusion.
 
         Returns (texts, metadatas, rrf_scores, max_dense_cosine). The last value is the top
         dense cosine similarity, used by the governance gate (RF10) — a stable, calibrated
-        signal independent of the RRF fusion scale. `where` applies a payload filter to both.
+        signal independent of the RRF fusion scale. `where` applies a payload filter to both;
+        `exclude_status` hides chunks the deterministic audit flagged (obsolete/poisoned/draft).
         """
         k = k or config.RETRIEVAL_K
-        qfilter = self._query_filter(where)
+        qfilter = self._query_filter(where, exclude_status)
         fetch = max(k * 4, 20)
 
         dense_vec = self.embedder.encode(
@@ -200,3 +214,52 @@ class VectorStore:
                 )
             ),
         )
+
+    def set_status_by_source(
+        self, source: str, status: str, *,
+        replaced_by: Optional[str] = None, validity_end: Optional[str] = None,
+    ):
+        """Flag every chunk of a source with a governance `status` (Qdrant set_payload).
+
+        Deterministic, idempotent, NO re-embedding. This is the primitive used by the
+        nightly obsolescence audit (active→obsolete) and by the anti-poisoning quarantine
+        (→poisoned). `replaced_by`/`validity_end` are written only when provided, so the
+        abrogation notice can be built from metadata alone (no LLM)."""
+        payload: dict = {"status": status}
+        if replaced_by is not None:
+            payload["replaced_by"] = replaced_by
+        if validity_end is not None:
+            payload["validity_end"] = validity_end
+        self.client.set_payload(
+            collection_name=self.collection_name,
+            payload=payload,
+            points=models.FilterSelector(
+                filter=models.Filter(
+                    must=[models.FieldCondition(
+                        key="source", match=models.MatchValue(value=source)
+                    )]
+                )
+            ),
+        )
+
+    def source_statuses(self) -> dict:
+        """Map each distinct `source` → its current `status` (first chunk seen).
+
+        Used by the audit/quarantine tools to know the previous status (for the
+        governance log) and to skip no-op updates (idempotency)."""
+        out: dict = {}
+        offset = None
+        while True:
+            points, offset = self.client.scroll(
+                collection_name=self.collection_name,
+                limit=1000, offset=offset,
+                with_payload=["source", "status"], with_vectors=False,
+            )
+            for p in points:
+                pl = p.payload or {}
+                src = pl.get("source")
+                if src and src not in out:
+                    out[src] = pl.get("status", "active")
+            if offset is None:
+                break
+        return out

@@ -1,6 +1,6 @@
 # NextPulse — Modello Dati
 
-> **Stato:** rev. 5 (modulo Bandi/Gare R.A.M. + hardening sicurezza API) · **Data:** 2026-06-07 · **Owner:** team NextPulse
+> **Stato:** rev. 5 (modulo Bandi/Gare MIT + hardening sicurezza API) · **Data:** 2026-06-07 · **Owner:** team NextPulse
 > Documento di lavoro interno. Definisce le entità, i formati di input, lo schema dei chunk
 > indicizzati e gli oggetti scambiati dalla pipeline RAG. **È l'unica fonte di verità per la
 > configurazione (§5).** Compagno di [REQUISITI.md](./REQUISITI.md) e [BRIEF.md](./BRIEF.md).
@@ -68,6 +68,10 @@ la chiave `_text` + i metadati elencati sotto).
 | `product` | str | ➖ | es. `T-EXCEED`, `Autovelox 106` | da estrarre |
 | `decreto` | str | ➖ | es. `3758` | da estrarre |
 | `data_decreto` | str | ➖ | es. `06/08/2014` | da estrarre |
+| `status` | str | ✅ | governance: `active` \| `obsolete` \| `poisoned` \| `draft` — filtro deterministico al retrieval | ✅ default `active` in ingestion |
+| `validity_start` | str | ➖ | inizio validità (= `data_decreto` quando estraibile) | ✅ da `data_decreto` |
+| `validity_end` | str | ➖ | fine validità — scritto dall'audit all'abrogazione | ➖ scritto dall'audit |
+| `replaced_by` | str | ➖ | provvedimento sostitutivo (per l'avviso "abrogato") | ➖ scritto dall'audit |
 
 > **Vincoli Qdrant:**
 > - il `payload` accetta valori scalari **e** strutturati (liste/dict) → metadati più ricchi che con ChromaDB.
@@ -129,9 +133,9 @@ ed è distrutta a fine query (zero residuo).
 > in memoria) · 3) Elaborazione esterna *zero-knowledge* (l'LLM manipola i token) · 4) Re-identificazione locale +
 > distruzione della mappa. Tutte le chiamate LLM (condense, giudice ambiguità, generazione) passano dal layer.
 
-### 3.6 Bando / Tender (modulo Bandi/Gare R.A.M.) — **corpus separato**
-Entità del modulo gare R.A.M. (`src/nextpulse/ram_scraper.py`). I bandi vivono in una **collection
-Qdrant dedicata** — `bandi_ram` (costante `BANDI_COLLECTION`) — **separata** da `documents` (KB Engine
+### 3.6 Bando / Tender (modulo Bandi/Gare MIT) — **corpus separato**
+Entità del modulo gare MIT (`src/nextpulse/bandi_scraper.py`). I bandi vivono in una **collection
+Qdrant dedicata** — `bandi_mit` (costante `BANDI_COLLECTION`) — **separata** da `documents` (KB Engine
 SpA), così i due domini non si mescolano mai nel retrieval. La collection riusa **lo stesso client Qdrant
 e lo stesso embedder** del processo (l'embedded Qdrant blocca l'intera cartella per processo; un secondo
 `SentenceTransformer` sarebbe spreco).
@@ -153,12 +157,12 @@ e lo stesso embedder** del processo (l'embedded Qdrant blocca l'intera cartella 
 | `requirements[]` | list | estrazione | requisiti di partecipazione (RF25) |
 | `chunks` | int | indicizzazione | n. chunk indicizzati per il bando |
 
-**Chunk bando** (point in `bandi_ram`): stessa struttura del Chunk §3.2 (vettori dense+BM25, testo in
+**Chunk bando** (point in `bandi_mit`): stessa struttura del Chunk §3.2 (vettori dense+BM25, testo in
 `_text`, id UUID5 deterministico) con **payload specifico**:
 
 | Campo (metadata) | Tipo | Scopo |
 |------------------|------|-------|
-| `source` | str | `RAM_bando_<id>_<file>` (o `…_requisiti` per il chunk sintetico) — citazione |
+| `source` | str | `bando_<codice>_doc<id>` (o `…_requisiti` per il chunk sintetico) — citazione |
 | `chunk_id` | int | ordine nel documento |
 | `doc_type` | str | `pdf` (documento di gara) \| `txt` (chunk requisiti sintetico) |
 | `category` | str | `bando` (fisso per questo corpus) |
@@ -174,6 +178,40 @@ e lo stesso embedder** del processo (l'embedded Qdrant blocca l'intera cartella 
 > (`.xml`, `.p7m`, `.zip`…). Un PDF non scaricabile/parsabile viene loggato e saltato, non blocca il bando;
 > un bando in errore non blocca lo scraping (stessa filosofia RNF5). Re-index **idempotente** (le `source`
 > del bando vengono droppate prima del re-insert).
+
+### 3.7 Governance & obsolescenza — **audit DETERMINISTICO (no AI)**
+L'affidabilità richiesta dalla vendita alla PA non può dipendere dal giudizio semantico del
+modello: la vigenza di un decreto la decidono **database e metadati**, non l'LLM. Tre meccanismi
+deterministici, tutti ancorati al campo `status` del chunk (§3.2):
+
+**a) Filtro al retrieval (`config.EXCLUDED_STATUSES` = `obsolete,poisoned,draft`).**
+`VectorStore.search(exclude_status=…)` applica un `must_not` sullo `status` (non un `must
+status=active`): i chunk **senza** campo `status` (legacy, pre-feature) **restano visibili** →
+**back-compatible, nessun re-index obbligatorio**. `RAGChain.retrieve()` applica il filtro di
+default (disattivabile con `STATUS_FILTER_ENABLED=0`).
+
+**b) Avviso "abrogato" (no-LLM, `OBSOLETE_NOTICE_ENABLED`).** Se il retrieval filtrato non trova
+nulla di pertinente, la chain rifà la ricerca **senza** filtro: se il match migliore è `obsolete`,
+costruisce un avviso **dai soli metadati** (`replaced_by`, `validity_end`) — *"Il provvedimento X
+risulta abrogato, sostituito da Z"* — invece del generico "non lo so". `poisoned`/`draft` **non**
+vengono mai mostrati (refuso generico). Il `QueryResult` porta `obsolete: bool`, `confidence=red`.
+
+**c) Audit notturno ibrido (`scripts/audit_obsolescence.py`, no-LLM).** Confronta il corpus con
+fonti autorevoli e flippa lo `status` via `VectorStore.set_status_by_source()` (Qdrant
+`set_payload`, **nessun re-embedding**), idempotente:
+- **primaria** — master file gestionale (`GOVERNANCE_MASTER_FILE`, CSV/JSON: `source → status,
+  replaced_by, validity_end, reason`);
+- **secondaria** — Normattiva (`NORMATTIVA_AUDIT_ENABLED=0`, Fase 2): pluggable, *best-effort*,
+  isolata in try/except (Normattiva non ha API REST stabile) → non fa **mai** fallire il job.
+
+**Data poisoning:** `scripts/quarantine_source.py <source>` mette in quarantena (`status=poisoned`,
+reversibile, invisibile all'istante) o, con `--delete`, **elimina fisicamente** (richiesto per il
+**diritto all'oblio GDPR Art. 17** quando il documento contiene PII: lo status **non** è cancellazione).
+
+**Log di governance (NIS2) — `src/nextpulse/governance_log.py`.** Ogni cambio di stato scrive una
+riga **immutabile** (`source`, `old_status→new_status`, `reason`, `replaced_by`, `validity_end`,
+`actor`, `changed_at`) in SQLite (`GOVERNANCE_LOG_PATH`). A differenza del `query_log` (§3.4) **non**
+viene mai anonimizzato né cancellato: è la **traccia di integrità** della knowledge base.
 
 ## 4. Oggetti runtime della pipeline RAG
 
@@ -196,6 +234,7 @@ Streamlit usa la chain conversazionale.
   "model": "google/gemma-4-26b-a4b-it:free",
   "grounded": true,
   "ambiguous": false,
+  "obsolete": false,
   "top_score": 0.906,
   "role": "presales",
   "confidence": "green",
@@ -207,6 +246,9 @@ indica se la risposta è stata generata (true) o è il fallback di governance (f
 è il coseno denso del miglior chunk (gate RF10: < `SCORE_THRESHOLD` → fallback senza generazione).
 **`ambiguous=true`** segnala il **gate di ambiguità** (RF19): un giudice LLM ha rilevato fonti in
 conflitto → risposta di discrezione (cita le fonti, rimanda al Bid Manager, nessuna interpretazione).
+**`obsolete=true`** segnala il **gate di obsolescenza** (§3.7, deterministico/no-LLM): il
+provvedimento più pertinente esiste ma è stato **abrogato** → avviso costruito dai metadati
+(`replaced_by`/`validity_end`), `confidence=red`. `poisoned`/`draft` restano invece invisibili.
 Il retrieval è **hybrid** (dense e5 + BM25, fusione RRF); il gate di rilevanza usa il coseno (scala stabile).
 Con un **profilo attivo** (RF20) il `QueryResult` porta anche **`role`** e **`confidence`** (🟢 verde / 🟡 giallo
 / 🔴 rosso): la risposta è adattata al ruolo (Sales/Pre-Sales/Bid Manager) e la confidenza riflette il gate
@@ -220,10 +262,10 @@ POST /api/query        { "question": str, "history": ChatMessage[], "k"?: int,
 GET  /api/status       → { "documents": int (distinti), "chunks": int, "model": str }
 GET  /api/roles        → [ { "key", "name", "terminology_level", "require_source_citation" } ]        (RF20)
 GET  /api/privacy      → { "logging_enabled", "retention_months", "anonymization", "total", "identified", "anonymized", "oldest" }  (RF22)
-— modulo Bandi/Gare R.A.M. —
+— modulo Bandi/Gare MIT —
 GET  /api/bandi        → { "categories": [ { "key", "label", "tenders": Tender[] } ], "total": int }   (RF24, ultimo scrape)
 GET  /api/bandi/scrape → text/event-stream: `data: {phase: listing|tender|done|error, …}`             (RF27, SSE)
-POST /api/bandi/query  { "question": str, "history": ChatMessage[], "k"?: int }  → QueryResponse        (RF26, corpus `bandi_ram`)
+POST /api/bandi/query  { "question": str, "history": ChatMessage[], "k"?: int }  → QueryResponse        (RF26, corpus `bandi_mit`)
 ```
 Se `web/dist/` esiste, FastAPI serve anche la UI (single-origin). `session_id`/`user_id` sono identificatori
 **opachi** (no PII intrinseca) usati per l'audit log e anonimizzati dopo la retention.
@@ -261,6 +303,12 @@ Da `config.py` / `.env` (vedi `.env.example`):
 | `PII_MASKING_ENABLED` | env | `1` | abilita la pseudonimizzazione reversibile della PII verso l'LLM (Art. 32) |
 | `PII_BACKEND` | env | `auto` | rilevatore PII: `auto` (Presidio se installato, altrimenti regex) \| `regex` \| `presidio` |
 | `PII_SPACY_MODEL` | env | `it_core_news_lg` | modello spaCy usato dal backend Presidio (da scaricare a parte) |
+| `STATUS_FILTER_ENABLED` | env | `1` | filtro deterministico al retrieval (esclude `EXCLUDED_STATUSES`); `0` = disattivato |
+| `EXCLUDED_STATUSES` | env | `obsolete,poisoned,draft` | stati nascosti al retrieval (`must_not`); `active`/mancante passano sempre |
+| `OBSOLETE_NOTICE_ENABLED` | env | `1` | abilita l'avviso "abrogato" (2° passaggio no-LLM dai metadati) |
+| `GOVERNANCE_MASTER_FILE` | env | `./data/_governance/obsolescence.csv` | fonte primaria dell'audit (CSV/JSON: `source→status,replaced_by,validity_end`) |
+| `NORMATTIVA_AUDIT_ENABLED` | env | `0` | fonte secondaria Normattiva nell'audit (Fase 2, best-effort) |
+| `GOVERNANCE_LOG_PATH` | env | `./governance_log.db` | log append-only dei cambi di stato (NIS2, mai anonimizzato) |
 
 ## 6. Invarianti / regole di integrità
 
@@ -271,6 +319,10 @@ Da `config.py` / `.env` (vedi `.env.example`):
 5. **Tabelle preservate**: CSV/XLSX vanno a chunk come Markdown coerente, non spezzati a metà riga.
 6. **Anonimizzazione GDPR del log:** dopo `LOG_RETENTION_MONTHS` (6) le righe del `query_log` perdono
    `user_id`/`session_id` (→ NULL) ma **non** vengono cancellate; `question` resta come dato statistico. Operazione idempotente.
+7. **Audit obsolescenza deterministico:** la vigenza di un provvedimento è decisa da `status` (DB/metadati),
+   **mai** dall'LLM. Lo `status` **non** è cancellazione: per il **diritto all'oblio (GDPR Art. 17)** su chunk
+   con PII serve l'eliminazione **fisica** (`delete_by_source` / `quarantine_source.py --delete`), non `poisoned`.
+   Ogni cambio di stato è tracciato nel `governance_log` immutabile (NIS2).
 
 ## 7. Nota di design — dati tabellari vs RAG (RISK-5)
 

@@ -1,6 +1,6 @@
-// ── Gare d'Appalto (R.A.M.) ──────────────────────────────────────────────────
-// A section separate from the sales chatbot. On open it scrapes the R.A.M. Logistica
-// Infrastrutture e Trasporti SpA procurement portal (bandi in corso + in aggiudicazione),
+// ── Gare d'Appalto (Portale Appalti MIT) ─────────────────────────────────────
+// A section separate from the sales chatbot. On open it scrapes the Ministero delle
+// Infrastrutture e dei Trasporti procurement portal (bandi in corso + in aggiudicazione),
 // shows a live loading spinner as each bando is indexed, highlights each bando's
 // participation requirements, and exposes a chatbot scoped to the scraped gare.
 
@@ -97,7 +97,7 @@ export function initBandi(container: HTMLElement) {
       <div class="grid h-9 w-9 place-items-center rounded-xl bg-azure-500/15 text-azure-300 ring-1 ring-azure-400/30">${I.gavel}</div>
       <div>
         <div class="font-display text-lg leading-none">Gare d'Appalto</div>
-        <div class="mt-1 text-[10px] uppercase tracking-[0.18em] text-navy-300">R.A.M. Logistica Infrastrutture e Trasporti S.p.A.</div>
+        <div class="mt-1 text-[10px] uppercase tracking-[0.18em] text-navy-300">Portale Appalti · Ministero Infrastrutture e Trasporti</div>
       </div>
       <div class="ml-auto flex items-center gap-3">
         <span id="bandi-status" class="hidden text-[11px] text-navy-300 sm:block"></span>
@@ -112,7 +112,7 @@ export function initBandi(container: HTMLElement) {
       <div id="bandi-progress" class="mx-auto hidden max-w-3xl"></div>
       <div id="bandi-empty" class="mx-auto max-w-md py-24 text-center">
         <div class="pulse-ring mx-auto mb-7 inline-grid h-14 w-14 place-items-center rounded-2xl bg-navy-850 text-azure-400 ring-1 ring-azure-400/20">${I.gavel}</div>
-        <h2 class="font-display text-2xl text-ink">Scraping dei bandi R.A.M.</h2>
+        <h2 class="font-display text-2xl text-ink">Scraping dei bandi MIT</h2>
         <p class="mt-3 text-[13px] leading-relaxed text-slatev">
           Avvia lo scraping del portale acquisti per recuperare i bandi
           <span class="font-semibold text-ink">in corso</span> e
@@ -188,7 +188,7 @@ function startScrape() {
     <div class="flex items-center gap-4 rounded-2xl border border-haze bg-card/80 px-5 py-4 backdrop-blur-sm">
       <span class="bandi-spinner"></span>
       <div class="min-w-0 flex-1">
-        <div id="bandi-prog-label" class="text-[13px] font-medium text-ink">Connessione al portale R.A.M.…</div>
+        <div id="bandi-prog-label" class="text-[13px] font-medium text-ink">Connessione al Portale Appalti MIT…</div>
         <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-haze">
           <div id="bandi-prog-bar" class="h-full w-0 rounded-full bg-azure-500 transition-all duration-300"></div>
         </div>

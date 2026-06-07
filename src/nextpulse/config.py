@@ -45,6 +45,33 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "./data"))
 # Incremental indexing: per-file content-hash manifest (skip unchanged files on re-index).
 INDEX_MANIFEST = QDRANT_PATH.parent / ".index_manifest.json"
 
+# ── Governance: obsolescence & data-poisoning (DETERMINISTIC audit) ──────────
+# The retrieval filter and the audit are deterministic (DB + metadata), never the
+# LLM: this is the reliability the Public Administration sale requires.
+# Retrieval hides chunks the audit has flagged. Legacy chunks WITHOUT a `status`
+# field are NOT excluded (back-compatible: no re-index needed).
+STATUS_FILTER_ENABLED = os.getenv("STATUS_FILTER_ENABLED", "1") == "1"
+# Statuses hidden from retrieval; `active` and missing-status always pass through.
+EXCLUDED_STATUSES = tuple(
+    s.strip() for s in os.getenv("EXCLUDED_STATUSES", "obsolete,poisoned,draft").split(",")
+    if s.strip()
+)
+# Second-pass "abrogato" notice: when the filtered retrieval finds nothing relevant,
+# re-search WITHOUT the status filter; if the best matches are OBSOLETE, return a
+# deterministic notice built from metadata (replaced_by/validity_end) — no LLM, no
+# hallucination. Poisoned/draft stay silently hidden (generic refusal).
+OBSOLETE_NOTICE_ENABLED = os.getenv("OBSOLETE_NOTICE_ENABLED", "1") == "1"
+# Deterministic obsolescence audit (nightly job) — HYBRID source of truth.
+# Primary: internal master file mapping source → status/replaced_by/validity_end.
+GOVERNANCE_MASTER_FILE = Path(
+    os.getenv("GOVERNANCE_MASTER_FILE", "./data/_governance/obsolescence.csv")
+)
+# Secondary (best-effort, Fase 2): Normattiva enrichment. OFF by default — Normattiva
+# has no stable public REST API, so the check is pluggable and never fails the job.
+NORMATTIVA_AUDIT_ENABLED = os.getenv("NORMATTIVA_AUDIT_ENABLED", "0") == "1"
+# Append-only governance audit log (NIS2 integrity/traceability of status changes).
+GOVERNANCE_LOG_PATH = Path(os.getenv("GOVERNANCE_LOG_PATH", "./governance_log.db"))
+
 # Query log (GDPR) — one SQLite row per query for analytics/audit.
 QUERY_LOG_ENABLED = os.getenv("QUERY_LOG_ENABLED", "1") == "1"
 QUERY_LOG_PATH = Path(os.getenv("QUERY_LOG_PATH", "./query_log.db"))

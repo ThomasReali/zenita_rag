@@ -1,6 +1,6 @@
 """API-level tests for the Gare d'Appalto (bandi) endpoints.
 
-The heavy collaborators (RAGChain/embedder, Qdrant VectorStore, the live RamScraper)
+The heavy collaborators (RAGChain/embedder, Qdrant VectorStore, the live scraper)
 are replaced with fakes, so these tests run offline and fast while still exercising the
 endpoint wiring: SSE streaming, grouping, and the bandi chatbot contract.
 """
@@ -42,7 +42,7 @@ class _FakeRAG:
             "standalone_query": question,
             "response": f"Risposta sui bandi a: {question}",
             "context": ["chunk"],
-            "sources": ["RAM_bando_74_Disciplinare.pdf"],
+            "sources": ["bando_G06515_doc162832"],
             "model": self.model,
             "grounded": True,
             "ambiguous": False,
@@ -86,7 +86,7 @@ class _FakeScraper:
 def client(monkeypatch):
     monkeypatch.setattr(api, "RAGChain", _FakeRAG)
     monkeypatch.setattr(api, "VectorStore", lambda *a, **k: _FakeVS())
-    monkeypatch.setattr(api, "RamScraper", _FakeScraper)
+    monkeypatch.setattr(api, "PortaleAppaltiScraper", _FakeScraper)
     monkeypatch.setattr(api.config, "QUERY_LOG_ENABLED", False)
     with TestClient(api.app) as c:
         yield c
