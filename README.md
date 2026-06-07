@@ -13,7 +13,7 @@ commerciale **solo** sulla base della documentazione aziendale, **cita sempre le
 
 **Engine SpA** (gruppo **Zenita**) opera nel **Traffic Enforcement & Smart City**: controllo
 velocità/autovelox, gestione ZTL, rilevazione passaggio con semaforo rosso, analytics per la
-mobilità urbana. La vendita di queste soluzioni è complessa: il team Sales / Pre-Sales / Bid
+mobilità urbana. La vendita di queste soluzioni è complessa: il team Pre-Sales / Sales / Bid
 Manager deve gestire documentazione tecnica distribuita, offerte storiche, requisiti di gara,
 vincoli normativi (decreti MIT, Codice della Strada), configurazioni personalizzate e
 stakeholder diversi — il tutto sotto forte **pressione sui tempi**.
@@ -36,7 +36,7 @@ decisionale** per vendere meglio soluzioni complesse.
 | Supportare offerte/gare | richieste evase senza escalation al Bid Manager |
 | Affidabilità/tracciabilità | % risposte con citazione; 0 prezzi/sigle/norme inventati |
 
-**Utenti:** Sales, Pre-Sales, Bid Manager, Product expert, Customer Success.
+**Utenti:** Pre-Sales, Sales, Bid Manager, Product expert, Customer Success.
 
 **Requisiti funzionali chiave**
 - **Ingestion** multi-formato (PDF, DOCX, CSV, XLSX, JSON, TXT) con metadati per la citazione.
@@ -76,7 +76,7 @@ PDF/DOCX/CSV/XLSX/JSON/TXT (data/) → chunk → embed (e5-small, locale) → Qd
 User query → condense (memoria conversazionale) → retrieve top-K (HYBRID dense e5 + BM25, RRF)
    → gate rilevanza (coseno < soglia → "non in doc") → gate ambiguità (giudice LLM: fonti in conflitto
    → discrezione) → build prompt (citazioni [Fonte: file, pag.]) → [MASKING PII locale] → OpenRouter LLM
-   → [DE-MASKING locale] → risposta adattata al PROFILO attivo (Sales/Pre-Sales/Bid Manager) + confidence
+   → [DE-MASKING locale] → risposta adattata al PROFILO attivo (Pre-Sales/Sales/Bid Manager) + confidence
    → fonti → audit log (SQLite, anonimizzato dopo 6 mesi)
 ```
 
@@ -127,7 +127,7 @@ sblocca Friendly Captcha (proof-of-work BLAKE2b) → listAllBandi per stato (in 
 ### Data Governance & privacy (GDPR)
 - **Grounding & anti-allucinazione**: il gate deterministico rifiuta fuori dominio (nessuna generazione).
 - **Tracciabilità**: ogni risposta cita file + pagina; il `QueryResult` espone `grounded`/`ambiguous`/`confidence`.
-- **Role-awareness**: tono, terminologia e citazioni adattati al profilo attivo (Sales/Pre-Sales/Bid Manager).
+- **Role-awareness**: tono, terminologia e citazioni adattati al profilo attivo (Pre-Sales/Sales/Bid Manager).
 - **Audit log**: una riga SQLite per query (`src/nextpulse/query_log.py`) con identificatori **opachi**.
 - **Pseudonimizzazione reversibile (Art. 32)**: un layer locale (`src/nextpulse/pseudonymizer.py`) maschera la
   PII (nomi, email, IBAN, CIG/CUP, importi €, margini %, Comuni) con token `[PERSON_1]`… **prima** dell'invio a
@@ -210,7 +210,7 @@ uv sync --extra pii && uv run python -m spacy download it_core_news_lg
 > Analisi tecnica dettagliata, pitch script e metriche di impatto in [BUSINESS_PROPOSAL.md](./docs/BUSINESS_PROPOSAL.md).
 
 NextPulse è uno strumento **interno B2B**: gli utenti sono i team commerciali di Engine SpA
-(Sales, Pre-Sales, Bid Manager); il valore è **efficienza e win-rate**, non ricavo diretto.
+(Pre-Sales, Sales, Bid Manager); il valore è **efficienza e win-rate**, non ricavo diretto.
 
 | KPI | Pre-RAG | Post-NextPulse |
 |-----|---------|----------------|
@@ -251,7 +251,7 @@ NextPulse/
 │   ├── pseudonymizer.py       # pseudonimizzazione reversibile PII (regex + Presidio opzionale)
 │   ├── query_log.py           # audit log query (SQLite) + anonimizzazione GDPR
 │   └── api.py                 # backend FastAPI (/api/status, /api/query, /api/roles, /api/privacy; serve web/dist)
-├── role_manager.py            # modulo standalone: 3 profili (Sales/Pre-Sales/Bid Manager) + confidence
+├── role_manager.py            # modulo standalone: 3 profili (Pre-Sales/Sales/Bid Manager) + confidence
 ├── web/                       # frontend Vite + TypeScript + Tailwind (chat UI + selettore profilo)
 │   ├── src/main.ts · src/style.css · index.html · package.json · vite.config.ts
 ├── scripts/

@@ -148,16 +148,10 @@ class RoleConfig:
 
 # ── Role registry ──────────────────────────────────────────────────────────────────
 
+# Ordine = priorità del profilo, dal più basso al più alto: Pre-Sales → Sales → Bid Manager.
+# Questo ordine è la fonte di verità: `/api/roles` itera il registry e la UI rende il selettore
+# nello stesso ordine.
 ROLES: Dict[str, RoleConfig] = {
-    "sales": RoleConfig(
-        name="Sales",
-        system_prompt=SALES_SYSTEM_PROMPT,
-        max_response_length=400,
-        require_source_citation=False,
-        terminology_level="client",
-        emphasis=["impatto operativo", "casi d'uso", "benefici", "referenze simili"],
-        omit=["dettagli implementativi", "vincoli normativi granulari", "pricing"],
-    ),
     "presales": RoleConfig(
         name="Pre-Sales",
         system_prompt=PRESALES_SYSTEM_PROMPT,
@@ -166,6 +160,15 @@ ROLES: Dict[str, RoleConfig] = {
         terminology_level="technical",
         emphasis=["parametri tecnici", "vincoli di prodotto", "compatibilità", "limitazioni note"],
         omit=["pricing", "considerazioni commerciali"],
+    ),
+    "sales": RoleConfig(
+        name="Sales",
+        system_prompt=SALES_SYSTEM_PROMPT,
+        max_response_length=400,
+        require_source_citation=False,
+        terminology_level="client",
+        emphasis=["impatto operativo", "casi d'uso", "benefici", "referenze simili"],
+        omit=["dettagli implementativi", "vincoli normativi granulari", "pricing"],
     ),
     "bid_manager": RoleConfig(
         name="Bid Manager",

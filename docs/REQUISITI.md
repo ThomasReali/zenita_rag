@@ -86,10 +86,12 @@ della challenge (Anceschi, Pastore, Guida) come fonte di requisiti via discovery
   conflitto (rilevato da un **giudice LLM**), rispondere **con discrezione** — citare le fonti distinte
   (decreto/data/pagina) e **rimandare al Bid Manager**, **senza** interpretare né risolvere il conflitto.
   Mai dedurre lo stato di vigenza/abrogazione. *(campo `ambiguous=true` nel `QueryResult`)*
-- **RF20** **Role-awareness:** tre profili (**Sales**, **Pre-Sales**, **Bid Manager**) selezionabili da un
-  controllo dedicato in UI. Ogni profilo ha system prompt, livello terminologico (cliente/tecnico/legale) e
-  formato fonti propri; la risposta espone una **confidenza** (🟢 verde / 🟡 giallo / 🔴 rosso). *(modulo
-  standalone `role_manager.py`; campi `role`/`confidence` nel `QueryResult`; `GET /api/roles`)*
+- **RF20** **Role-awareness:** tre profili — in ordine di priorità crescente (dal più basso al più alto):
+  **Pre-Sales**, **Sales**, **Bid Manager** — selezionabili da un controllo dedicato in UI. Ogni profilo ha
+  system prompt, livello terminologico (tecnico/cliente/legale) e formato fonti propri; la risposta espone una
+  **confidenza** (🟢 verde / 🟡 giallo / 🔴 rosso). L'ordine del registry `ROLES` è la fonte di verità: `GET
+  /api/roles` lo itera e la UI rende il selettore nello stesso ordine. *(modulo standalone `role_manager.py`;
+  campi `role`/`confidence` nel `QueryResult`)*
 - **RF21** **Audit log delle query:** una riga per query (SQLite) con identificatori **opachi** (`user_id`,
   `session_id`), ruolo, esito di governance, confidenza, n. fonti. Logging **best-effort**: non blocca mai la risposta.
 - **RF22** **GDPR — Data Anonymization:** **job notturno** che azzera (`UPDATE … SET user_id=NULL, session_id=NULL`)

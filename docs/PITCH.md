@@ -10,7 +10,7 @@
 ## Scaletta (i 7 punti della Scheda Challenge)
 
 ### 1. Problema
-Il team Sales/Pre-Sales/Bid Manager perde tempo a recuperare informazioni tecniche e normative
+Il team Pre-Sales/Sales/Bid Manager perde tempo a recuperare informazioni tecniche e normative
 **sparse** su decreti MIT, Codice della Strada, FAQ, schede ed elenchi. Sotto pressione sui tempi,
 il rischio è una **risposta lenta, incompleta o sbagliata** al cliente/in gara — che costa credibilità
 e opportunità. Una risposta normativa errata su un'omologazione può invalidare una sanzione: il **costo
@@ -18,7 +18,7 @@ dell'errore è alto**.
 
 ### 2. Contesto e utenti
 - **Engine SpA** (Zenita): autovelox, ZTL, semaforo rosso, analytics mobilità.
-- **Utenti:** Sales (risposte rapide e sicure), Pre-Sales (dettaglio tecnico/config), **Bid Manager**
+- **Utenti:** Pre-Sales (dettaglio tecnico/config), Sales (risposte rapide e sicure), **Bid Manager**
   (requisiti di gara, riferimenti ai decreti), Customer Success.
 - **Dato reale fornito:** `KNOWLEDGE/` — **539 file, 108 MB**, prevalentemente PDF normativi + tabelle MIT.
 
@@ -32,7 +32,7 @@ RAG **locale-first** con governance al centro:
   **RRF**, su **Qdrant** (embedded, locale) con payload filtering.
 - **Governance**: **gate deterministico** (sotto soglia di similarità → "non in documentazione",
   *senza generare*) + **citazioni `[Fonte: file, pag.]`** + **gate di ambiguità** (giudice LLM → discrezione).
-- **Role-awareness**: 3 profili (**Sales / Pre-Sales / Bid Manager**) con tono, terminologia e formato fonti
+- **Role-awareness**: 3 profili (**Pre-Sales / Sales / Bid Manager**) con tono, terminologia e formato fonti
   dedicati + **confidence** 🟢🟡🔴 per ogni risposta — selezionabili dalla dashboard.
 - **Privacy by design (GDPR)**: ogni query è loggata per l'audit con identificatori **opachi**; un **job
   notturno** anonimizza i log oltre **6 mesi** (`user_id`/`session_id` → NULL) — il dato resta statistico,

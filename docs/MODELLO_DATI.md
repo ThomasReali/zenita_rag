@@ -251,7 +251,7 @@ provvedimento più pertinente esiste ma è stato **abrogato** → avviso costrui
 (`replaced_by`/`validity_end`), `confidence=red`. `poisoned`/`draft` restano invece invisibili.
 Il retrieval è **hybrid** (dense e5 + BM25, fusione RRF); il gate di rilevanza usa il coseno (scala stabile).
 Con un **profilo attivo** (RF20) il `QueryResult` porta anche **`role`** e **`confidence`** (🟢 verde / 🟡 giallo
-/ 🔴 rosso): la risposta è adattata al ruolo (Sales/Pre-Sales/Bid Manager) e la confidenza riflette il gate
+/ 🔴 rosso): la risposta è adattata al ruolo (Pre-Sales/Sales/Bid Manager) e la confidenza riflette il gate
 (rosso = fallback o discrezione). Il modulo standalone `role_manager.py` gestisce prompt, terminologia e formato fonti per ruolo.
 
 ### 4.3 Contratto API REST (implementato — `src/nextpulse/api.py`)

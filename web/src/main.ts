@@ -28,9 +28,10 @@ const SUGGESTIONS = [
   'Cosa prevede il Codice della Strada sui limiti di velocità?',
 ]
 
+// Ordine = priorità del profilo (basso → alto): Pre-Sales · Sales · Bid Manager.
 const ROLE_HINTS: Record<string, string> = {
-  sales: 'Linguaggio cliente · benefici · risposte brevi',
   presales: 'Tecnico · parametri e specifiche · fonti inline',
+  sales: 'Linguaggio cliente · benefici · risposte brevi',
   bid_manager: 'Conformità · riferimenti normativi · adempimenti',
 }
 let currentRole = localStorage.getItem('np_role') || 'presales'
@@ -572,9 +573,11 @@ async function loadStatus() {
 }
 
 async function loadRoles() {
+  // Ordine = priorità del profilo (basso → alto): Pre-Sales · Sales · Bid Manager.
+  // Fallback usato solo se /api/roles non risponde; l'ordine reale arriva dal backend.
   let roles: { key: string; name: string }[] = [
-    { key: 'sales', name: 'Sales' },
     { key: 'presales', name: 'Pre-Sales' },
+    { key: 'sales', name: 'Sales' },
     { key: 'bid_manager', name: 'Bid Manager' },
   ]
   try {

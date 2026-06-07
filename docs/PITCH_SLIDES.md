@@ -46,7 +46,7 @@
 
 **Sullo schermo**
 - *Domanda in linguaggio naturale → risposta fondata e citata, in secondi*
-- Per **Sales · Pre-Sales · Bid Manager**
+- Per **Pre-Sales · Sales · Bid Manager**
 - Risposta **solo** dai documenti aziendali, con **citazione esatta**: file · pagina · decreto
 - Offerte **100% compliant**, in modo dimostrabile
 

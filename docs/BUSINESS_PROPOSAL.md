@@ -70,7 +70,7 @@ chunk, 0 oltre 512 token** · retrieval ibrido · gate verificato live (query of
 ## TASK 2 — Business Proposal (highlights) & Pitch Script (3')
 
 ### 2.1 Business Proposal — highlights
-- **Cosa:** assistente RAG **iper-verticale** sul Traffic Enforcement per Sales / Pre-Sales / Bid Manager di Engine.
+- **Cosa:** assistente RAG **iper-verticale** sul Traffic Enforcement per Pre-Sales / Sales / Bid Manager di Engine.
 - **Valore:** risposte commerciali **rapide, fondate e tracciabili**, dimostrabilmente **conformi** alla normativa di sicurezza stradale → meno errori in offerta/gara, meno escalation, cicli più brevi.
 - **Moat (Data Governance):** citazioni obbligatorie + **doppio gate** (anti-allucinazione deterministico + giudice del conflitto) + aggiornamento incrementale → un'infrastruttura di compliance, non un chatbot.
 - **Costo/footprint:** embedding e vector DB **locali** (costo ≈ 0, data residency); solo la generazione a token.

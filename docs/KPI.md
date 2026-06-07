@@ -93,7 +93,7 @@ SELECT ROUND(100.0 * SUM(ambiguous) / COUNT(*), 1) AS ambiguity_rate_pct FROM qu
 
 **"Chi usa il sistema e quanto?"**
 
-Numero di query per profilo (Sales, Pre-Sales, Bid Manager) nel periodo. Se un profilo non usa
+Numero di query per profilo (Pre-Sales, Sales, Bid Manager) nel periodo. Se un profilo non usa
 il sistema significa che non lo trova rilevante per le sue domande o che la KB non copre il
 suo dominio — guida le decisioni su cosa aggiungere alla knowledge base.
 
