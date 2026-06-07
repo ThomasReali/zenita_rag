@@ -423,8 +423,11 @@ class TestRAGChainUnit:
         assert mock_create.call_count == 1  # only the judge — no answer generated
 
     def test_ambiguity_judge_ok_allows_answer(self, chain):
+        # Two comparably-relevant sources (neither dominates) → the judge runs and, on OK,
+        # the answer is generated. (Symmetric phrasing keeps both equally retrievable so the
+        # dominance guard does not short-circuit the judge this test is exercising.)
         chain.vector_store.add_documents(
-            texts=["Il decreto A prevede X.", "Il decreto B conferma X."],
+            texts=["Il decreto A prevede X.", "Il decreto B prevede X."],
             metadatas=[{"source": "a.pdf"}, {"source": "b.pdf"}],
         )
         judge = MagicMock()
@@ -469,6 +472,47 @@ class TestRAGChainUnit:
         assert result["confidence"] == "red"
         assert AMBIGUITY_MESSAGE in result["response"]
         assert "a.pdf" in result["response"] and "b.pdf" in result["response"]
+
+    def test_ambiguity_skipped_when_one_source_dominates(self, chain):
+        """Regression (RF19 false-positive on cross-domain query): when a single source
+        clearly dominates the fused ranking, the conflict judge must be SKIPPED — even if
+        it would say CONFLITTO — so the query is answered grounded, not gated to discretion.
+
+        Mirrors the real bug: "rilevare automaticamente le targhe" pulled in several parallel,
+        non-contradictory autovelox decrees. Here a dominant ZTL source must win cleanly."""
+        chain.vector_store.add_documents(
+            texts=[
+                # dominant source: contains the query terms (dense + BM25 both favour it)
+                "Gli impianti per la rilevazione automatica delle targhe dei veicoli in ingresso "
+                "alle zone a traffico limitato (ZTL) identificano la targa ai fini "
+                "dell'accertamento delle violazioni.",
+                # weak, different-domain sources (speed enforcement) — must not create ambiguity
+                "Approvazione del dispositivo autovelox per il controllo della velocità.",
+                "Omologazione dell'apparecchio per il rilevamento della velocità media.",
+            ],
+            metadatas=[
+                {"source": "DPR250.pdf", "decreto": "250"},
+                {"source": "auto1.pdf", "decreto": "170"},
+                {"source": "auto2.pdf", "decreto": "305"},
+            ],
+        )
+        # The judge, if ever called, would (wrongly) flag a conflict — it must NOT be called.
+        judge = MagicMock()
+        judge.choices = [MagicMock(message=MagicMock(content="CONFLITTO"))]
+        with patch.object(chain.client.chat.completions, "create",
+                          side_effect=[MOCK_ANSWER, judge]) as mock_create:
+            result = chain.query("Il sistema può rilevare automaticamente le targhe?")
+        assert result["ambiguous"] is False           # RF19 did NOT misfire
+        assert result["grounded"] is True
+        assert result["response"] == "Engine SpA answer"
+        assert mock_create.call_count == 1             # only generation — conflict judge skipped
+        assert "DPR250.pdf" in result["sources"]       # dominant source drives the answer
+
+    def test_dominant_source_helper(self, chain):
+        """Unit: the dominance guard fires on a clear leader, not on a flat ranking."""
+        metas = [{"source": "a.pdf"}, {"source": "b.pdf"}, {"source": "c.pdf"}]
+        assert chain._dominant_source(metas, [0.033, 0.016, 0.016]) is True    # clear leader
+        assert chain._dominant_source(metas, [0.0301, 0.0299, 0.0285]) is False  # flat → judge runs
 
     # ── role-awareness integration ───────────────────────────────────────────
 

@@ -81,9 +81,19 @@ CONFLICT_JUDGE_PROMPT = """\
 Sei un revisore normativo rigoroso. Di seguito alcuni estratti recuperati per una domanda. \
 Stabilisci se contengono una CONTRADDIZIONE DIRETTA tra fonti diverse sullo stesso punto specifico \
 (es. due decreti che fissano valori, obblighi o scadenze DIVERSI per la stessa identica fattispecie).
-NON è un conflitto: informazioni complementari, dettagli aggiuntivi, ripetizioni dello stesso \
-contenuto, o estratti che trattano aspetti diversi dello stesso tema.
-Rispondi con UNA sola parola: CONFLITTO solo se c'è una contraddizione diretta tra fonti diverse, \
+
+NON è un conflitto (rispondi OK in tutti questi casi):
+- informazioni complementari, dettagli aggiuntivi, ripetizioni dello stesso contenuto, o estratti \
+che trattano aspetti diversi dello stesso tema;
+- più provvedimenti che approvano o disciplinano APPARECCHI, SISTEMI o FATTISPECIE DIVERSI \
+(es. l'omologazione di più modelli di autovelox diversi, oppure sistemi di domini diversi come \
+ZTL/varchi accessi, autovelox/velocità, semaforo rosso): COESISTONO e non si contraddicono;
+- fonti che rispondono alla domanda da prospettive o ambiti differenti.
+
+C'è conflitto SOLO se due fonti diverse stabiliscono regole INCOMPATIBILI per lo STESSO identico \
+oggetto/situazione (non basta che parlino dello stesso tema generale).
+
+Rispondi con UNA sola parola: CONFLITTO solo se c'è una contraddizione diretta come sopra, \
 altrimenti OK.
 
 DOMANDA: {query}
@@ -253,6 +263,24 @@ class RAGChain:
         flagged = [m for m in metas if m.get("status") == "obsolete"]
         return OBSOLETE_MESSAGE + "\n\n" + block, self._format_sources(flagged)
 
+    @staticmethod
+    def _dominant_source(metas: List[dict], scores: List[float]) -> bool:
+        """True if ONE source clearly leads the fused (RRF) ranking over every other source.
+
+        When a single provvedimento dominates retrieval, the answer is firmly anchored to it:
+        there is no genuine ambiguity to arbitrate, so the RF19 conflict judge is skipped.
+        This stops RF19 from misfiring when several parallel, non-contradictory provvedimenti
+        are retrieved together. A flat ranking (no clear leader) is NOT dominant → judge runs."""
+        best_by_source: dict = {}
+        for m, s in zip(metas, scores):
+            src = str(m.get("source"))
+            if s > best_by_source.get(src, float("-inf")):
+                best_by_source[src] = s
+        if len(best_by_source) < 2:
+            return True  # a single source cannot conflict with itself
+        top1, top2 = sorted(best_by_source.values(), reverse=True)[:2]
+        return top2 <= 0 or top1 >= top2 * (1.0 + config.AMBIGUITY_DOMINANCE_GAP)
+
     def _detect_conflict(self, standalone_query: str, docs: List[str], metas: List[dict],
                          session=None) -> bool:
         """LLM judge: do the retrieved sources conflict? Fail-safe to True (discretion)."""
@@ -360,11 +388,17 @@ class RAGChain:
                 grounded, ambiguous, confidence = False, False, "red"
                 sources: List[str] = []
                 response = rm.format_response("", [], "red") if rm else self.no_context_message
-        elif (config.AMBIGUITY_JUDGE and distinct >= 2
+        elif (config.AMBIGUITY_JUDGE and 2 <= distinct <= config.AMBIGUITY_MAX_DISTINCT
+              and not self._dominant_source(metas, scores)
               and self._detect_conflict(standalone_query, docs, metas, session=session)):
             # Gate 2 (ambiguity) — conflicting sources → discretion / defer to a human. (🔴)
-            # Only meaningful with ≥2 DISTINCT sources: chunks from one document cannot
-            # conflict across provvedimenti, so the judge (and its LLM call) is skipped.
+            # RF19 targets a FOCUSED contradiction between few provvedimenti on the same point.
+            # The judge (and its LLM call) is skipped when:
+            #  - a single source supplies all chunks (distinct < 2 — cannot self-conflict);
+            #  - retrieval is fragmented across many distinct sources (distinct > MAX_DISTINCT):
+            #    a broad/under-specified query, not a contradiction (e.g. a cross-topic question
+            #    pulling in several parallel autovelox decrees) → answer grounded, don't defer;
+            #  - one source DOMINATES the fused ranking (no real ambiguity to arbitrate).
             grounded, ambiguous, confidence = False, True, "red"
             sources = self._format_sources(metas)
             # Discretion (RF19) is a distinct outcome from "no source": always cite the

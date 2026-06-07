@@ -41,6 +41,16 @@ SCORE_THRESHOLD = float(os.getenv("SCORE_THRESHOLD", "0.82"))
 # Ambiguity gate: an LLM judge checks if the retrieved sources are in conflict; if so the
 # assistant responds with DISCRETION (cites sources, defers to the Bid Manager — no interpretation).
 AMBIGUITY_JUDGE = os.getenv("AMBIGUITY_JUDGE", "1") == "1"
+# Dominance guard: if ONE source leads the fused (RRF) ranking by at least this relative
+# margin over the best of any other source, the retrieval points firmly at a single
+# provvedimento → no genuine ambiguity to arbitrate, so the conflict judge is skipped.
+# Prevents RF19 from misfiring on several parallel, non-contradictory provvedimenti.
+AMBIGUITY_DOMINANCE_GAP = float(os.getenv("AMBIGUITY_DOMINANCE_GAP", "0.15"))
+# Focus guard: a genuine RF19 conflict is a FOCUSED disagreement between few provvedimenti on
+# the same point. When retrieval is fragmented across MORE distinct sources than this, it is a
+# broad / under-specified query (many parallel provvedimenti), not a contradiction → the judge
+# is skipped (answer grounded) instead of wrongly deferring. Keeps RF19 for the 2–3 source case.
+AMBIGUITY_MAX_DISTINCT = int(os.getenv("AMBIGUITY_MAX_DISTINCT", "3"))
 DATA_DIR = Path(os.getenv("DATA_DIR", "./data"))
 # Incremental indexing: per-file content-hash manifest (skip unchanged files on re-index).
 INDEX_MANIFEST = QDRANT_PATH.parent / ".index_manifest.json"

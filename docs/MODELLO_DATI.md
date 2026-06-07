@@ -295,6 +295,8 @@ Da `config.py` / `.env` (vedi `.env.example`):
 | `RETRIEVAL_K` | env | `5` | n. chunk recuperati per query |
 | `SCORE_THRESHOLD` | env | `0.82` | coseno < soglia → fallback "non in documentazione" (gate RF10) |
 | `AMBIGUITY_JUDGE` | env | `1` | abilita il giudice LLM del conflitto fra fonti (gate RF19) |
+| `AMBIGUITY_DOMINANCE_GAP` | env | `0.15` | RF19 saltato se una fonte domina il ranking RRF di questo margine relativo (no ambiguità reale) |
+| `AMBIGUITY_MAX_DISTINCT` | env | `3` | RF19 valutato solo con 2–N fonti distinte; oltre → query ampia/frammentata, non un conflitto |
 | `LLM_MAX_RETRIES` | env | `4` | retry con backoff su 429/5xx |
 | `DATA_DIR` | env | `./data` | sorgenti da indicizzare (usare `./KNOWLEDGE` per il corpus) |
 | `QUERY_LOG_ENABLED` | env | `1` | abilita il log query SQLite (audit/analytics) |
