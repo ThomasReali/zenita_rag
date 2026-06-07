@@ -508,6 +508,33 @@ class TestRAGChainUnit:
         assert mock_create.call_count == 1             # only generation — conflict judge skipped
         assert "DPR250.pdf" in result["sources"]       # dominant source drives the answer
 
+    def test_format_sources_groups_pages(self, chain):
+        """FONTI CITATE: one entry per file, pages merged (no per-page repetition), in
+        first-appearance order (must match the inline [N] markers, so NOT alphabetic)."""
+        metas = [{"source": "X.pdf", "page": 11}, {"source": "X.pdf", "page": 5},
+                 {"source": "Y.pdf"}]
+        assert chain._format_sources(metas) == ["X.pdf (pagg. 5, 11)", "Y.pdf"]
+
+    def test_normalize_citations_strips_decoration(self, chain):
+        """Inline citations are forced to the bare [N] form, whatever decoration the model adds."""
+        f = chain._normalize_citations
+        assert f("...al transito (Fonte: [1], p. 2).") == "...al transito [1]."
+        assert f("vedi [Fonte 2] e [Fonte: 3].") == "vedi [2] e [3]."
+        assert f("regola Fonte: [1] qui") == "regola [1] qui"
+        assert f("più fonti (Fonte: [1], [2], p. 4).") == "più fonti [1] [2]."
+        # plain prose containing the word 'fonte' (no marker) is untouched
+        assert f("secondo la fonte normativa vigente") == "secondo la fonte normativa vigente"
+
+    def test_build_context_numbers_sources(self, chain):
+        """Context labels each chunk with its source NUMBER; same source shares the number,
+        and the numbering matches the legend order (X=1, Y=2)."""
+        metas = [{"source": "X.pdf"}, {"source": "Y.pdf"}, {"source": "X.pdf"}]
+        ctx = chain._build_context(["a", "b", "c"], metas)
+        assert "[1]\na" in ctx and "[2]\nb" in ctx and "[1]\nc" in ctx
+        assert ctx.count("[1]") == 2                 # X.pdf reused → same number
+        # legend order aligns with the inline numbers
+        assert chain._format_sources(metas) == ["X.pdf", "Y.pdf"]
+
     def test_dominant_source_helper(self, chain):
         """Unit: the dominance guard fires on a clear leader, not on a flat ranking."""
         metas = [{"source": "a.pdf"}, {"source": "b.pdf"}, {"source": "c.pdf"}]
@@ -525,7 +552,10 @@ class TestRAGChainUnit:
             result = chain.query("specifiche velomatic", role="presales")
         assert result["role"] == "presales"
         assert result["confidence"] in ("green", "yellow")
-        assert "Fonte" in result["response"]  # Pre-Sales cita la fonte
+        # Citations are now inline numeric markers + the numbered 'Fonti citate' legend
+        # (result["sources"]); no verbose in-text "Fonte:" footer.
+        assert "Fonte:" not in result["response"]
+        assert result["sources"] == ["datasheet.pdf (pag. 2)"]
 
     def test_query_role_sales_red_no_source(self, chain):
         with patch.object(chain.client.chat.completions, "create") as mock_create:
@@ -642,6 +672,11 @@ class _FakeRAG:
     def query(self, question, chat_history=None, k=None, role=None):
         if question == "boom":
             raise RuntimeError("provider 429")
+        if question == "ratelimit":
+            import httpx
+            from openai import RateLimitError
+            resp = httpx.Response(429, request=httpx.Request("POST", "http://test"))
+            raise RateLimitError("rate limited", response=resp, body=None)
         return {
             "query": question, "standalone_query": question, "response": "ok",
             "sources": ["a.pdf (pag. 1)"], "context": ["ctx"],
@@ -684,6 +719,14 @@ class TestAPI:
         assert "provider 429" not in detail
         assert "RuntimeError" not in detail
         assert "non è momentaneamente disponibile" in detail
+
+    def test_query_rate_limit_is_429(self, monkeypatch):
+        """LLM quota/rate-limit (429) must surface as a truthful 429, not a generic 502."""
+        with self._client(monkeypatch) as client:
+            resp = client.post("/api/query", json={"question": "ratelimit"})
+        assert resp.status_code == 429
+        detail = resp.json()["detail"].lower()
+        assert "quota" in detail or "limite" in detail
 
     def test_query_rejects_abusive_input(self, monkeypatch):
         """Input-validation hard limits return 422 (defense-in-depth, not 500/502)."""
@@ -759,12 +802,15 @@ class TestRoles:
         out = rm.format_response("qualcosa", [], "red").lower()
         assert "conformità" in out or "escalation" in out
 
-    def test_format_presales_cites_source(self, tmp_path):
+    def test_format_presales_no_intext_footer(self, tmp_path):
+        """Pre-Sales no longer appends a verbose in-text 'Fonte:' footer: citations are inline
+        numeric markers + the numbered 'Fonti citate' legend (built in rag_chain)."""
         from role_manager import RoleManager
         rm = RoleManager(state_path=tmp_path / "s.json")
         rm.set_role("presales")
         out = rm.format_response("±2 km/h", [{"source": "datasheet.pdf", "page": 2}], "green")
-        assert "±2 km/h" in out and "Fonte" in out
+        assert out == "±2 km/h"
+        assert "Fonte" not in out
 
     def test_format_sales_no_source(self, tmp_path):
         from role_manager import RoleManager

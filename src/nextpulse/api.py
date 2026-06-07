@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fastapi import FastAPI, HTTPException  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from openai import RateLimitError  # noqa: E402 — distinguish LLM quota/rate-limit from outages
 from fastapi.responses import StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
@@ -67,8 +68,10 @@ requisiti, importi, CIG o scadenze.
 3. REQUISITI: Quando ti vengono chiesti i requisiti di partecipazione, elencali \
 in modo puntuale e distingui (idoneità professionale, capacità economico-finanziaria, \
 capacità tecnico-professionale, requisiti di ordine generale) quando possibile.
-4. CITAZIONI: Cita SEMPRE la fonte usando l'etichetta [Fonte: ...] che precede \
-ciascun documento, indicando il bando/CIG di riferimento.
+4. CITAZIONI: ogni documento INIZIA con il suo marcatore tra parentesi quadre (es. [1], \
+[2]). Riporta inline ESATTAMENTE quel marcatore subito dopo la frase (es. "...entro 30 \
+giorni [1]."). Scrivi SOLO il marcatore: niente parola "Fonte", niente nome del file, \
+niente elenco fonti finale (la legenda è allegata dal sistema).
 5. TONE: Professionale, sintetico, strutturato (elenchi puntati).
 
 DOCUMENTI DI GARA:
@@ -218,6 +221,16 @@ def query(req: QueryRequest):
             k=req.k,
             role=req.role,
         )
+    except RateLimitError:
+        # LLM quota / rate limit exhausted (e.g. OpenRouter free-models-per-day): this is an
+        # actionable, distinct condition — surface it truthfully (HTTP 429) instead of a generic
+        # outage, so the user knows to wait for the reset or configure a model with credit.
+        logger.warning("LLM rate limit / quota exceeded on /api/query")
+        raise HTTPException(
+            status_code=429,
+            detail=("Limite di richieste del modello LLM raggiunto (quota del piano gratuito). "
+                    "Riprova più tardi o configura un modello con credito disponibile."),
+        )
     except Exception:  # never leak provider internals / stack traces to the client
         logger.exception("query pipeline failed")
         raise HTTPException(
@@ -325,6 +338,13 @@ def bandi_query(req: BandiQueryRequest):
                 chat_history=[m.model_dump() for m in req.history],
                 k=req.k,
             )
+    except RateLimitError:
+        logger.warning("LLM rate limit / quota exceeded on /api/bandi/query")
+        raise HTTPException(
+            status_code=429,
+            detail=("Limite di richieste del modello LLM raggiunto (quota del piano gratuito). "
+                    "Riprova più tardi o configura un modello con credito disponibile."),
+        )
     except Exception:
         logger.exception("bandi query pipeline failed")
         raise HTTPException(

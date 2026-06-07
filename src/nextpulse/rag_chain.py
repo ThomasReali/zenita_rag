@@ -1,5 +1,6 @@
 """RAG chain — retrieve, reformulate with conversational memory, generate"""
 import logging
+import re
 import time
 from typing import List, Optional, Tuple
 from openai import OpenAI
@@ -40,11 +41,13 @@ normative o sigle.
 registro alla domanda: a una domanda GENERICA o introduttiva rispondi in modo chiaro e \
 discorsivo (inquadramento generale), senza appesantire con decreti, articoli o sigle se \
 non servono.
-4. CITAZIONI: Cita la fonte con l'etichetta [Fonte: ...] (con pagina/articolo se presenti) \
-quando fornisci un DATO SPECIFICO (parametro tecnico, valore, requisito, riferimento \
-normativo puntuale) oppure quando l'utente lo chiede; in tal caso elenca le fonti usate alla \
-fine. NON forzare riferimenti a decreti/normative su domande generiche se l'utente non li \
-ha richiesti. Resta comunque vincolato alla regola 1 (solo informazioni dai documenti).
+4. CITAZIONI: ogni documento qui sotto INIZIA con il suo marcatore di citazione tra parentesi \
+quadre (es. [1], [2]). Quando usi un'informazione di un documento, riporta inline ESATTAMENTE \
+quel marcatore subito dopo la frase — es. "...va installata la segnaletica [2]." Scrivi SOLO \
+il marcatore: NON scrivere la parola "Fonte", NON scrivere "[Fonte 1]", NON scrivere il nome \
+del file, e NON aggiungere un elenco di fonti alla fine (la legenda numerata viene allegata \
+automaticamente dal sistema). Su domande generiche, se l'utente non chiede riferimenti \
+puntuali, puoi rispondere senza citazioni. Resta vincolato alla regola 1 (solo dai documenti).
 
 DOCUMENTI AZIENDALI:
 {context_str}
@@ -167,32 +170,76 @@ class RAGChain:
     # ── citation helpers ──────────────────────────────────────────────────────
 
     @staticmethod
-    def _format_sources(metas: List[dict]) -> List[str]:
-        """Unique source document labels — one entry per file, not per page."""
-        seen: set = set()
-        labels = []
+    def _normalize_citations(text: str) -> str:
+        """Force inline citations to the bare numeric form [N]. gpt-style models tend to wrap
+        the marker with 'Fonte:'/page noise (es. '(Fonte: [1], p. 2)' or '[Fonte 1]'); we strip
+        that deterministically so the answer carries only [1]/[2], matching the legend."""
+        # (Fonte: [1], p. 2) / (Fonte [1][2]) → the bare markers it contains
+        text = re.sub(
+            r"\(\s*font[ei]?[:\s]*((?:\[\d+\][\s,;]*)+)[^)]*\)",
+            lambda m: " ".join(re.findall(r"\[\d+\]", m.group(1))),
+            text, flags=re.I,
+        )
+        # [Fonte: 1] / [Fonte 1] → [1]
+        text = re.sub(r"\[\s*font[ei]?[:\s]+(\d+)\s*\]", r"[\1]", text, flags=re.I)
+        # bare "Fonte: [1]" (no parentheses) → [1]; require the colon so prose like
+        # "più fonti [1]" (where 'fonti' is a real word) is left untouched.
+        text = re.sub(r"\bfont[ei]?:\s*(\[\d+\])", r"\1", text, flags=re.I)
+        # tidy: collapse runs of spaces and re-attach punctuation pushed off by the strip
+        text = re.sub(r"[ \t]{2,}", " ", text)
+        text = re.sub(r"[ \t]+([.,;:])", r"\1", text)
+        return text
+
+    @staticmethod
+    def _ordered_sources(metas: List[dict]) -> List[str]:
+        """Distinct source names in FIRST-APPEARANCE order. This order defines the citation
+        numbering shared by the context labels ([Fonte N]) and the 'Fonti citate' legend, so
+        an inline [N] always points to the right entry."""
+        out: List[str] = []
         for m in metas:
             src = str(m.get("source", "sconosciuto"))
-            if src in seen:
-                continue
-            seen.add(src)
+            if src not in out:
+                out.append(src)
+        return out
+
+    @staticmethod
+    def _format_sources(metas: List[dict]) -> List[str]:
+        """The numbered 'Fonti citate' legend — one entry per file, in citation order. Chunks
+        from the same document on different pages are merged: the file name appears once and
+        its pages are listed together (es. 'X.pdf (pagg. 5, 11, 18)'). The order is NOT sorted:
+        it matches the inline [N] markers produced from _build_context."""
+        order = RAGChain._ordered_sources(metas)
+        pages_by_src: dict = {s: [] for s in order}
+        for m in metas:
+            src = str(m.get("source", "sconosciuto"))
             page = m.get("page")
-            labels.append(f"{src} (pag. {page})" if page else src)
-        return sorted(labels)
+            if page is not None and page not in pages_by_src[src]:
+                pages_by_src[src].append(page)
+        labels = []
+        for src in order:
+            pages = pages_by_src[src]
+            if not pages:
+                labels.append(src)
+                continue
+            try:
+                ordered = sorted(pages, key=lambda p: int(p))
+            except (TypeError, ValueError):
+                ordered = pages
+            tag = "pag. " if len(ordered) == 1 else "pagg. "
+            labels.append(f"{src} ({tag}{', '.join(str(p) for p in ordered)})")
+        return labels
 
     @staticmethod
     def _build_context(docs: List[str], metas: List[dict]) -> str:
-        """Label each chunk with its source so the LLM can cite it precisely."""
+        """Prefix each chunk with its source NUMBER ([Fonte N]) so the model cites inline as
+        [N]. The numbering is first-appearance order and matches the 'Fonti citate' legend
+        (_format_sources), so [N] in the answer maps to legend entry N. Chunks from the same
+        document share the same N."""
+        idx = {s: i + 1 for i, s in enumerate(RAGChain._ordered_sources(metas))}
         parts: List[str] = []
         for doc, m in zip(docs, metas):
-            tag = str(m.get("source", "?"))
-            if m.get("page"):
-                tag += f", pag. {m['page']}"
-            if m.get("section"):
-                tag += f", {m['section']}"
-            if m.get("decreto"):
-                tag += f", decreto {m['decreto']}"
-            parts.append(f"[Fonte: {tag}]\n{doc}")
+            n = idx.get(str(m.get("source", "sconosciuto")), "?")
+            parts.append(f"[{n}]\n{doc}")
         return "\n\n".join(parts)
 
     @staticmethod
@@ -426,6 +473,7 @@ class RAGChain:
                 ],
                 session=session, temperature=0.3, max_tokens=max_tokens,
             )
+            raw = self._normalize_citations(raw)  # force bare [N] inline citations
             response = rm.format_response(raw, metas, confidence) if rm else raw
 
         latency_ms = int((time.perf_counter() - t0) * 1000)

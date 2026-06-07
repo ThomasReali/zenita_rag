@@ -112,6 +112,11 @@ function esc(s: string): string {
   d.textContent = s
   return d.innerHTML
 }
+// Minimal, XSS-safe markdown rendering: escape first (so any HTML in the text becomes
+// inert), THEN turn **bold** into <strong>. Only our own tags can reach innerHTML.
+function renderRich(s: string): string {
+  return esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+}
 const tile = (label: string, val: string | number) =>
   `<div class="stat-tile">
      <div class="stat-num">${val}</div>
@@ -447,7 +452,7 @@ function addAssistant(r: QueryResponse) {
         </div>
 
         <!-- Response body -->
-        <div class="whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink">${esc(r.response)}</div>
+        <div class="whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink">${renderRich(r.response)}</div>
 
         <!-- Numbered sources -->
         ${sources}

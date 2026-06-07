@@ -178,26 +178,40 @@ ROLES: Dict[str, RoleConfig] = {
 
 # ── output formatting helpers (pure functions) ──────────────────────────────────────
 
-def _source_label(s: dict) -> str:
-    """Render a retrieval source dict into a compact, human-readable label."""
-    parts = [str(s.get("source") or s.get("file") or s.get("id") or "fonte")]
-    if s.get("page"):
-        parts.append(f"pag. {s['page']}")
-    if s.get("decreto"):
-        parts.append(f"decreto {s['decreto']}")
-    if s.get("data_decreto"):
-        parts.append(f"del {s['data_decreto']}")
+def _doc_label(name: str, decreto, data, pages: List) -> str:
+    """Render one DOCUMENT into a compact label, listing all its pages once."""
+    parts = [name]
+    if pages:
+        try:
+            ordered = sorted(pages, key=lambda p: int(p))
+        except (TypeError, ValueError):
+            ordered = list(pages)
+        parts.append(("pag. " if len(ordered) == 1 else "pagg. ")
+                     + ", ".join(str(p) for p in ordered))
+    if decreto:
+        parts.append(f"decreto {decreto}")
+    if data:
+        parts.append(f"del {data}")
     return " · ".join(parts)
 
 
 def _unique_labels(sources: List[dict]) -> List[str]:
-    seen, out = set(), []
+    """One label per DOCUMENT: chunks from the same file (different pages) are merged so the
+    document name appears once and its pages are listed together (es. 'X.pdf · pagg. 5, 11, 18')."""
+    order: List[tuple] = []
+    groups: Dict[tuple, dict] = {}
     for s in sources:
-        label = _source_label(s)
-        if label not in seen:
-            seen.add(label)
-            out.append(label)
-    return out
+        name = str(s.get("source") or s.get("file") or s.get("id") or "fonte")
+        decreto, data = s.get("decreto"), s.get("data_decreto")
+        key = (name, str(decreto or ""), str(data or ""))
+        if key not in groups:
+            groups[key] = {"name": name, "decreto": decreto, "data": data, "pages": []}
+            order.append(key)
+        page = s.get("page")
+        if page is not None and page not in groups[key]["pages"]:
+            groups[key]["pages"].append(page)
+    return [_doc_label(g["name"], g["decreto"], g["data"], g["pages"])
+            for g in (groups[k] for k in order)]
 
 
 def _red_message(role: RoleConfig, sources: List[dict]) -> str:
@@ -223,15 +237,6 @@ def _yellow_prefix(role: RoleConfig) -> str:
     if role.terminology_level == "legal":
         return "⚠ Claim derivato da più atti, da verificare.\n"
     return ""  # sales: stays in client language (the prose already hedges)
-
-
-def _sources_footer(role: RoleConfig, sources: List[dict]) -> str:
-    labels = _unique_labels(sources)
-    if not labels:
-        return ""
-    if role.terminology_level == "legal":
-        return "Fonte verificabile: " + "; ".join(labels)
-    return "Fonte: " + "; ".join(labels)
 
 
 # ── RoleManager ──────────────────────────────────────────────────────────────────────
@@ -297,11 +302,9 @@ class RoleManager:
         prefix = _yellow_prefix(role) if conf == "yellow" else ""
         blocks = [prefix + body if prefix else body]
 
-        if role.require_source_citation:
-            footer = _sources_footer(role, sources)
-            if footer:
-                blocks.append(footer)
-        # Sales (require_source_citation=False): keep client-facing prose, no source block.
+        # No in-text "Fonte:" footer: citations are inline numeric markers ([1], [2]) produced
+        # by the model, and the full sources are shown once in the numbered 'Fonti citate'
+        # legend (rag_chain._format_sources → UI). Avoids the verbose, repeated footer.
         if conf == "yellow" and role.terminology_level == "client":
             blocks.append("_(informazione indicativa, in conferma)_")
 
