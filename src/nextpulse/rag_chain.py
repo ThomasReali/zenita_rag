@@ -174,6 +174,17 @@ class RAGChain:
             if (apply_status_filter and config.STATUS_FILTER_ENABLED)
             else ()
         )
+        if config.RERANK_ENABLED:
+            # Over-fetch from the recall-oriented hybrid retrieval, then let the cross-encoder
+            # pick the precise top-k. The dense-cosine gate signal (4th return value) is the max
+            # over the larger candidate set — still a valid, if not stricter, gate input.
+            from src.nextpulse import reranker
+            fetch = max(config.RERANK_CANDIDATES, k)
+            docs, metas, scores, top_cos = self.vector_store.search(
+                query, k=fetch, exclude_status=exclude
+            )
+            docs, metas, scores = reranker.rerank(query, docs, metas, scores, top_k=k)
+            return docs, metas, scores, top_cos
         return self.vector_store.search(query, k=k, exclude_status=exclude)
 
     # ── citation helpers ──────────────────────────────────────────────────────

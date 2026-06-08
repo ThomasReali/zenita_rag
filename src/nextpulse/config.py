@@ -40,6 +40,13 @@ RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", "5"))
 RESPONSE_CACHE_ENABLED = os.getenv("RESPONSE_CACHE_ENABLED", "1") == "1"
 RESPONSE_CACHE_SIZE = int(os.getenv("RESPONSE_CACHE_SIZE", "256"))
 RESPONSE_CACHE_TTL_SECONDS = float(os.getenv("RESPONSE_CACHE_TTL_SECONDS", "1800"))
+# Cross-encoder re-ranking (opt-in): fetch more candidates from the hybrid retrieval and
+# re-order them with a cross-encoder before keeping top-k. Improves precision of the cited
+# sources. OFF by default — it downloads a model and adds per-query latency; the pipeline is
+# unchanged when disabled. The gate signal (dense cosine) is untouched by re-ranking.
+RERANK_ENABLED = os.getenv("RERANK_ENABLED", "0") == "1"
+RERANK_MODEL = os.getenv("RERANK_MODEL", "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
+RERANK_CANDIDATES = int(os.getenv("RERANK_CANDIDATES", "20"))
 # Governance gate: top cosine score below this → deterministic "not in documentation"
 # (no generation). Tuned for multilingual-e5-small (in-domain ≈0.85–0.90, off-topic ≈0.80).
 SCORE_THRESHOLD = float(os.getenv("SCORE_THRESHOLD", "0.82"))
