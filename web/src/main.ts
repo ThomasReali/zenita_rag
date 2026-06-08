@@ -1,5 +1,6 @@
 import './style.css'
 import { initBandi } from './bandi'
+import { initConfig } from './config'
 
 interface QueryResponse {
   query: string
@@ -149,9 +150,13 @@ function render() {
           <span class="nav-ico grid h-7 w-7 place-items-center rounded-lg bg-white/[0.06] text-azure-300 ring-1 ring-white/10">${ICONS.pulse}</span>
           <span id="nav-chat-label">Assistente Pre-Sales</span>
         </button>
-        <button id="nav-bandi" data-view="bandi" class="nav-item group flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium text-white/90 transition">
+        <button id="nav-bandi" data-view="bandi" class="nav-item group mb-1.5 flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium text-white/90 transition">
           <span class="nav-ico grid h-7 w-7 place-items-center rounded-lg bg-white/[0.06] text-azure-300 ring-1 ring-white/10">${ICONS.search}</span>
           <span>Gare d'Appalto · MIT</span>
+        </button>
+        <button id="nav-config" data-view="config" class="nav-item group flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium text-white/90 transition">
+          <span class="nav-ico grid h-7 w-7 place-items-center rounded-lg bg-white/[0.06] text-azure-300 ring-1 ring-white/10"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><path d="M15 4V2M15 10V8M11 6H9M21 6h-2M18 9l-1.5-1.5M18 3l-1.5 1.5M4 20l9-9M13.5 6.5 17 10"/></svg></span>
+          <span>Configura Offerta</span>
         </button>
       </nav>
 
@@ -237,6 +242,9 @@ function render() {
     <!-- GARE D'APPALTO (Portale Appalti MIT) — separate section, initialized lazily -->
     <main id="bandi-main" class="relative hidden min-w-0 flex-1 flex-col"></main>
 
+    <!-- CONFIGURA OFFERTA (bozza grounded) — separate section, initialized lazily -->
+    <main id="config-main" class="relative hidden min-w-0 flex-1 flex-col"></main>
+
     <!-- RF17 — LIMITI DEL SISTEMA (modal) -->
     <div id="limits-modal" class="fixed inset-0 z-50 hidden items-center justify-center p-4">
       <div id="limits-backdrop" class="absolute inset-0 bg-navy-950/60 backdrop-blur-sm"></div>
@@ -287,9 +295,10 @@ function render() {
   })
   applyTheme(preferredTheme())  // set the button icon now that it exists
 
-  // View switch: sales assistant chat ↔ Gare d'Appalto (Portale Appalti MIT) section.
+  // View switch: chat ↔ Gare d'Appalto (Portale Appalti MIT) ↔ Configura Offerta.
   $('#nav-chat').addEventListener('click', () => showView('chat'))
   $('#nav-bandi').addEventListener('click', () => showView('bandi'))
+  $('#nav-config').addEventListener('click', () => showView('config'))
   showView('chat')
 
   updateExportState()
@@ -297,20 +306,21 @@ function render() {
 }
 
 let bandiReady = false
-function showView(view: 'chat' | 'bandi') {
-  const chat = $('#chat-main')
-  const bandi = $('#bandi-main')
-  const isBandi = view === 'bandi'
-  chat.classList.toggle('hidden', isBandi)
-  chat.classList.toggle('flex', !isBandi)
-  bandi.classList.toggle('hidden', !isBandi)
-  bandi.classList.toggle('flex', isBandi)
-  $('#nav-chat').classList.toggle('nav-active', !isBandi)
-  $('#nav-bandi').classList.toggle('nav-active', isBandi)
-  if (isBandi && !bandiReady) {
-    bandiReady = true
-    initBandi(bandi)
+let configReady = false
+function showView(view: 'chat' | 'bandi' | 'config') {
+  const panes: Record<string, HTMLElement> = {
+    chat: $('#chat-main'), bandi: $('#bandi-main'), config: $('#config-main'),
   }
+  for (const [name, pane] of Object.entries(panes)) {
+    const active = name === view
+    pane.classList.toggle('hidden', !active)
+    pane.classList.toggle('flex', active)
+  }
+  $('#nav-chat').classList.toggle('nav-active', view === 'chat')
+  $('#nav-bandi').classList.toggle('nav-active', view === 'bandi')
+  $('#nav-config').classList.toggle('nav-active', view === 'config')
+  if (view === 'bandi' && !bandiReady) { bandiReady = true; initBandi(panes.bandi) }
+  if (view === 'config' && !configReady) { configReady = true; initConfig(panes.config) }
 }
 
 // Enable the export button only once there is something to export.
