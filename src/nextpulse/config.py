@@ -47,6 +47,14 @@ RESPONSE_CACHE_TTL_SECONDS = float(os.getenv("RESPONSE_CACHE_TTL_SECONDS", "1800
 RERANK_ENABLED = os.getenv("RERANK_ENABLED", "0") == "1"
 RERANK_MODEL = os.getenv("RERANK_MODEL", "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
 RERANK_CANDIDATES = int(os.getenv("RERANK_CANDIDATES", "20"))
+
+# Per-IP rate limiting on the LLM-cost endpoints (/api/query, /api/query/stream,
+# /api/bandi/query): a sliding window guards against request floods / cost abuse — a real
+# defense beyond input validation. In-memory, per process. RATE_LIMIT_PER_MINUTE requests
+# are allowed per client IP within RATE_LIMIT_WINDOW_SECONDS; excess gets HTTP 429.
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "1") == "1"
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+RATE_LIMIT_WINDOW_SECONDS = float(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
 # Governance gate: top cosine score below this → deterministic "not in documentation"
 # (no generation). Tuned for multilingual-e5-small (in-domain ≈0.85–0.90, off-topic ≈0.80).
 SCORE_THRESHOLD = float(os.getenv("SCORE_THRESHOLD", "0.82"))

@@ -19,7 +19,7 @@ from typing import List, Optional
 # Allow `uvicorn src.nextpulse.api:app` from the project root.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi import Depends, FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from openai import RateLimitError  # noqa: E402 — distinguish LLM quota/rate-limit from outages
 from fastapi.responses import StreamingResponse  # noqa: E402
@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field  # noqa: E402
 from src.nextpulse import config  # noqa: E402
 from src.nextpulse.rag_chain import RAGChain  # noqa: E402
 from src.nextpulse.query_log import QueryLog  # noqa: E402
+from src.nextpulse.ratelimit import SlidingWindowLimiter  # noqa: E402
 from src.nextpulse.vector_store import VectorStore  # noqa: E402
 from src.nextpulse.bandi_scraper import (  # noqa: E402
     BANDI_COLLECTION,
@@ -45,6 +46,29 @@ except ImportError as _err:
 
 
 logger = logging.getLogger("nextpulse.api")
+
+# Per-IP rate limiter shared across the LLM-cost endpoints (process-local sliding window).
+_rate_limiter = SlidingWindowLimiter()
+
+
+def _enforce_rate_limit(request: Request) -> None:
+    """FastAPI dependency: reject requests over the per-IP quota with HTTP 429.
+
+    Thresholds are read from config at call time, so they can be tuned (or disabled) via
+    env without restarting in tests. Keyed by client IP; falls back to a constant key when
+    the peer address is unavailable (e.g. some test transports)."""
+    if not config.RATE_LIMIT_ENABLED:
+        return
+    key = request.client.host if request.client else "unknown"
+    if not _rate_limiter.allow(
+        key, config.RATE_LIMIT_PER_MINUTE, config.RATE_LIMIT_WINDOW_SECONDS
+    ):
+        logger.warning("rate limit exceeded for %s", key)
+        raise HTTPException(
+            status_code=429,
+            detail=("Troppe richieste in un breve intervallo. Attendi qualche secondo "
+                    "prima di riprovare."),
+        )
 
 # ── Input limits (defense-in-depth: reject oversized/abusive payloads at the edge) ──
 MAX_QUESTION_CHARS = 4000     # a question longer than this is almost certainly abuse
@@ -212,7 +236,8 @@ def privacy():
     return base
 
 
-@app.post("/api/query", response_model=QueryResponse)
+@app.post("/api/query", response_model=QueryResponse,
+          dependencies=[Depends(_enforce_rate_limit)])
 def query(req: QueryRequest):
     rag = app.state.rag
     try:
@@ -325,7 +350,8 @@ async def bandi_scrape():
     )
 
 
-@app.post("/api/bandi/query", response_model=QueryResponse)
+@app.post("/api/bandi/query", response_model=QueryResponse,
+          dependencies=[Depends(_enforce_rate_limit)])
 def bandi_query(req: BandiQueryRequest):
     """RAG chatbot scoped to the scraped MIT bandi corpus."""
     try:
