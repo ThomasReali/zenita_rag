@@ -147,6 +147,7 @@ class QueryResponse(BaseModel):
     confidence: Optional[str] = None
     pii_masked: Optional[int] = None  # entità PII pseudonimizzate prima dell'invio all'LLM
     latency_ms: Optional[int] = None  # durata totale della pipeline in millisecondi
+    cached: bool = False              # risposta servita dalla cache locale (no round-trip LLM)
 
 
 @asynccontextmanager

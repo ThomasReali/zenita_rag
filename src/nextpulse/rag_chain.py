@@ -1,9 +1,12 @@
 """RAG chain — retrieve, reformulate with conversational memory, generate"""
+import hashlib
+import json
 import logging
 import re
 import time
 from typing import List, Optional, Tuple
 from openai import OpenAI
+from src.nextpulse.cache import TTLCache
 from src.nextpulse.vector_store import VectorStore
 from src.nextpulse.pseudonymizer import Pseudonymizer
 from src.nextpulse import config
@@ -134,6 +137,12 @@ class RAGChain:
         # Reversible pseudonymization layer (GDPR Art. 32): masks PII before any
         # text reaches OpenRouter, re-identifies it locally on the response.
         self.pseudonymizer = Pseudonymizer()
+        # Per-instance response cache: identical questions skip the LLM (demo latency/cost).
+        # Bound to THIS chain, so the bandi corpus never returns a company-KB answer.
+        self._cache = (
+            TTLCache(config.RESPONSE_CACHE_SIZE, config.RESPONSE_CACHE_TTL_SECONDS)
+            if config.RESPONSE_CACHE_ENABLED else None
+        )
 
     # ── LLM call (with optional PII masking) ──────────────────────────────────
 
@@ -394,6 +403,17 @@ class RAGChain:
         chat_history = chat_history or []
         t0 = time.perf_counter()
 
+        # Cache lookup: identical (question, role, k, history) → reuse the prior answer,
+        # skipping retrieval + LLM entirely. Returns a shallow copy flagged cached=True.
+        cache_key = self._cache_key(question, chat_history, k, role)
+        if self._cache is not None and cache_key is not None:
+            hit = self._cache.get(cache_key)
+            if hit is not None:
+                out = dict(hit)
+                out["cached"] = True
+                out["latency_ms"] = int((time.perf_counter() - t0) * 1000)
+                return out
+
         # Optional role layer — never breaks the pipeline if unavailable.
         rm = None
         if role:
@@ -408,10 +428,36 @@ class RAGChain:
         # Reversible pseudonymization session — ephemeral PII map, wiped in finally.
         session = self.pseudonymizer.session() if config.PII_MASKING_ENABLED else None
         try:
-            return self._run_pipeline(question, chat_history, k, rm, session, t0)
+            result = self._run_pipeline(question, chat_history, k, rm, session, t0)
         finally:
             if session is not None:
                 session.close()  # destroy the temporary map (zero residual PII)
+
+        if self._cache is not None and cache_key is not None:
+            self._cache.set(cache_key, dict(result))
+        return result
+
+    @staticmethod
+    def _cache_key(
+        question: str, chat_history: List[dict], k: Optional[int], role: Optional[str]
+    ) -> Optional[str]:
+        """Stable key over the inputs that determine the answer. History is included
+        (it drives the standalone query); the question is whitespace-normalized so trivial
+        formatting differences still hit. Returns None if the inputs are unhashable."""
+        try:
+            payload = {
+                "q": " ".join(question.split()).lower(),
+                "k": k,
+                "role": role,
+                "h": [
+                    (str(m.get("role", "")), " ".join(str(m.get("content", "")).split()))
+                    for m in chat_history[-6:]  # same window the condenser actually uses
+                ],
+            }
+            blob = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+        except Exception:
+            return None
 
     def _run_pipeline(self, question, chat_history, k, rm, session, t0) -> dict:
         # Step 1 — conversational memory: standalone query (masked for the LLM)
@@ -492,6 +538,7 @@ class RAGChain:
             "confidence": confidence,
             "pii_masked": session.masked_count if session is not None else 0,
             "latency_ms": latency_ms,
+            "cached": False,
         }
         logger.info(
             "query role=%s grounded=%s ambiguous=%s obsolete=%s confidence=%s top_score=%.3f sources=%d pii_masked=%d latency_ms=%d",

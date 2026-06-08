@@ -35,6 +35,11 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
 
 # RAG
 RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", "5"))
+# Response cache (in-memory, per RAGChain): repeated identical questions skip the LLM
+# round-trip — lower latency/cost during demos and a guard against free-tier 429s.
+RESPONSE_CACHE_ENABLED = os.getenv("RESPONSE_CACHE_ENABLED", "1") == "1"
+RESPONSE_CACHE_SIZE = int(os.getenv("RESPONSE_CACHE_SIZE", "256"))
+RESPONSE_CACHE_TTL_SECONDS = float(os.getenv("RESPONSE_CACHE_TTL_SECONDS", "1800"))
 # Governance gate: top cosine score below this → deterministic "not in documentation"
 # (no generation). Tuned for multilingual-e5-small (in-domain ≈0.85–0.90, off-topic ≈0.80).
 SCORE_THRESHOLD = float(os.getenv("SCORE_THRESHOLD", "0.82"))
