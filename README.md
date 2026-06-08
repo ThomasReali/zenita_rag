@@ -96,8 +96,9 @@ User query → condense (memoria conversazionale) → retrieve top-K (HYBRID den
 token con citazione per pagina, **doppia governance** (gate anti-allucinazione su score + **gate di
 ambiguità** con giudice LLM → discrezione), **role-awareness** (3 profili + confidence), **privacy by design
 GDPR** (audit log + anonimizzazione notturna + **pseudonimizzazione reversibile della PII** verso l'LLM, Art. 32),
-**UI FastAPI + frontend Vite/TS/Tailwind**, **hardening** (indicizzazione incrementale, retry, logging) e
-**69 test**. *(Rinviato: OCR scansioni — serve il language pack `ita`.)*
+**UI FastAPI + frontend Vite/TS/Tailwind** (con **streaming SSE** delle risposte), **cache risposte** +
+**rate-limiting per IP**, **re-ranking cross-encoder** opt-in, **hardening** (indicizzazione incrementale,
+retry, logging) e **139 test**. *(Rinviato: OCR scansioni — serve il language pack `ita`.)*
 
 ### Sezione Gare d'Appalto (Portale Appalti MIT) — scraping live + RAG dedicato
 Sezione separata dal chatbot principale (switch nella command rail). All'apertura esegue lo
@@ -149,8 +150,10 @@ sblocca Friendly Captcha (proof-of-work BLAKE2b) → listAllBandi per stato (in 
 - **No information disclosure**: gli errori della pipeline non espongono eccezione/stack/dettagli del provider
   al client → **HTTP 502** con messaggio generico, dettaglio solo nel log server-side.
 - **SQL injection non applicabile**: l'audit log SQLite usa solo query **parametrizzate**.
-- *In backlog*: rate-limiting per IP/sessione; `role` da **identità autenticata** server-side (oggi è
-  selezionato dal client → governance, non sicurezza).
+- **Rate-limiting per IP** (sliding-window in-memory) su `/api/query`, `/api/query/stream` e
+  `/api/bandi/query`: oltre la quota → **HTTP 429** (difesa da flood / costo LLM incontrollato).
+- *In backlog*: `role` da **identità autenticata** server-side (oggi è selezionato dal client →
+  governance, non sicurezza).
 
 ## 5. Configurazione
 
@@ -167,6 +170,12 @@ Tutto in `.env` (vedi `.env.example` — fonte di verità in [MODELLO_DATI.md §
 | `RETRIEVAL_K` | `5` | chunk recuperati per query |
 | `SCORE_THRESHOLD` | `0.82` | sotto soglia → "non in documentazione" (gate anti-allucinazione) |
 | `AMBIGUITY_JUDGE` | `1` | giudice LLM del conflitto tra fonti (→ discrezione) |
+| `RESPONSE_CACHE_ENABLED` | `1` | cache risposte (TTL+LRU) per domande ripetute (latenza/costo) |
+| `RESPONSE_CACHE_SIZE` / `RESPONSE_CACHE_TTL_SECONDS` | `256` / `1800` | dimensione e durata cache |
+| `RERANK_ENABLED` | `0` | re-ranking cross-encoder dei candidati (opt-in: scarica un modello) |
+| `RERANK_MODEL` / `RERANK_CANDIDATES` | `mmarco-mMiniLMv2-L12` / `20` | modello reranker e n. candidati pre-rerank |
+| `RATE_LIMIT_ENABLED` | `1` | rate-limiting per IP sugli endpoint a costo LLM (→ 429) |
+| `RATE_LIMIT_PER_MINUTE` / `RATE_LIMIT_WINDOW_SECONDS` | `60` / `60` | quota richieste e finestra |
 | `DATA_DIR` | `./data` | sorgenti da indicizzare (`./KNOWLEDGE` per il corpus) |
 | `QUERY_LOG_ENABLED` | `1` | abilita l'audit log delle query (SQLite) |
 | `QUERY_LOG_PATH` | `./query_log.db` | percorso del DB del log query |
@@ -197,7 +206,7 @@ uv run python scripts/anonymize_logs.py --dry-run    # anteprima; poi senza --dr
 # alternative
 streamlit run scripts/app.py             # vecchia UI Streamlit
 uv run python scripts/query_rag.py --role bid_manager  # CLI (multi-turn, profilo selezionabile)
-uv run pytest tests/ -q                  # 69 test (LLM mockato)
+uv run pytest tests/ -q                  # 139 test (LLM mockato)
 
 # (opzionale) abilita il NER di Microsoft Presidio per il masking PII di nomi/organizzazioni
 uv sync --extra pii && uv run python -m spacy download it_core_news_lg
@@ -225,16 +234,18 @@ Dettaglio in [REQUISITI.md §8](./docs/REQUISITI.md).
 
 ## 8. Roadmap
 
+**Fatto (iterazione miglioramenti — vedi [docs/ACTION_PLAN.md](./docs/ACTION_PLAN.md)):**
+**streaming risposte (SSE)** `POST /api/query/stream` · **cache risposte** (TTL+LRU) ·
+**re-ranking cross-encoder** (opt-in) · **rate-limiting per IP** · **mini eval-harness** (`scripts/eval_rag.py`).
+
 **Aperto / in backlog:**
 
 | Priorità | Item | Blocco |
 |----------|------|--------|
 | Alta | OCR delle 19 scansioni non indicizzate | manca `tesseract-data-ita` (pacchetto di sistema) |
 | Alta | Modello a pagamento per demo affidabile | es. `google/gemini-2.0-flash-001` vs free rate-limited |
-| Media | Streaming risposte (SSE) | — |
-| Media | Caching risposte / embedding frequenti | — |
-| Media | Re-ranking cross-encoder | migliora precisione retrieval |
-| Bassa | Enrichment metadati via manifest MIT | join decreto→titolo/data |
+| Media | `role` da identità autenticata server-side | richiede scelta IdP/SSO |
+| Bassa | Enrichment metadati via manifest MIT | join decreto→titolo/data (manca il manifest) |
 | Bassa | Live-fetch gazzette ufficiali | integrazione fonte esterna |
 | Bassa | Capacità agentiche (configuratore offerta) | — |
 | Bassa | Multilingua (mercati esteri gruppo Zenita) | — |
@@ -260,7 +271,7 @@ NextPulse/
 │   ├── query_rag.py           # Q&A da terminale (multi-turn, --role)
 │   ├── anonymize_logs.py      # job notturno GDPR: anonimizza i log oltre la retention
 │   └── app.py                 # UI Streamlit alternativa (deprecata)
-├── tests/test_rag.py          # 69 test (LLM mockato)
+├── tests/test_rag.py          # suite principale (139 test totali, LLM mockato)
 ├── data/                      # documenti da indicizzare (gitignored)
 ├── qdrant_data/               # store Qdrant embedded (gitignored)
 ├── KNOWLEDGE/                 # corpus reale fornito (PDF normativi, CSV/XLSX/DOCX/JSON)

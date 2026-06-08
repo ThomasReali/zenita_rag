@@ -50,3 +50,31 @@ dipendenze di sistema → **archiviato** e riportato all'utente.
 - Tutto su `feat/sentinel-ui-docs`, un commit per unità logica, test ad ogni step.
 - Nessuna modifica distruttiva; gli endpoint esistenti restano invariati (le novità sono additive).
 - Default conservativi (rerank OFF) così l'app in esecuzione non cambia comportamento finché non si abilita.
+
+---
+
+## ☕ Report del mattino (sessione autonoma conclusa)
+
+**Implementato e testato (tutto verde — 139 test, da 111):**
+| # | Cosa | File chiave |
+|---|------|-------------|
+| A1 | Allineato tracking RF16/RF17 (erano già fatti in UI) | `docs/REQUISITI.md` |
+| A2 | Cache risposte TTL+LRU per-istanza (`cached` nel result) | `src/nextpulse/cache.py` |
+| A3 | Streaming SSE `POST /api/query/stream` + UI live | `rag_chain.py`, `api.py`, `web/src/main.ts` |
+| B1 | Re-ranking cross-encoder opt-in (`RERANK_ENABLED=0`) | `src/nextpulse/reranker.py` |
+| B2 | Mini eval-harness KPI governance | `scripts/eval_rag.py` |
+| C1 | Rate-limiting per IP (→ 429) | `src/nextpulse/ratelimit.py` |
+
+**Verifiche live (backend riavviato):** streaming reale 568 token + risposta completa 2232 char;
+cache hit sulla 2ª chiamata (3 eventi, `cached=true`); suite `pytest` 139/139.
+
+**📦 Archiviato — serve una tua decisione/dipendenza (nessuna azione presa):**
+- **C2** Ruolo da identità autenticata (SSO/IdP) — scelta di prodotto.
+- **D1** OCR scansioni — serve installare `tesseract-ocr` + lingua `ita` (pacchetto di sistema, admin).
+- **D2** Configuratore d'offerta agentico — alto sforzo + generativo non deterministico, da progettare insieme.
+- **D3** Enrichment metadati MIT — manca il file manifest sorgente (decreto→titolo/data).
+- **D4** Live-fetch gazzette ufficiali — integrazione esterna senza API stabile.
+- **D5** Modello LLM a pagamento per demo — scelta di budget/account (`CHAT_MODEL` + credito OpenRouter).
+
+**Per provare lo streaming:** `cd web; npm run dev` → http://localhost:5173 (backend già su :8000).
+**Per misurare i KPI:** `uv run python scripts/eval_rag.py` (fa chiamate LLM reali).
