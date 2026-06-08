@@ -322,6 +322,47 @@ def query_stream(req: QueryRequest):
     )
 
 
+# ── Offer-draft configurator (bozza d'offerta, grounded) ─────────────────────────
+
+class ConfigureRequest(BaseModel):
+    scenario: str = Field(min_length=1, max_length=MAX_QUESTION_CHARS)
+    needs: List[str] = Field(default_factory=list, max_length=10)  # esigenze per ampliare il retrieval
+    k: Optional[int] = Field(default=None, ge=1, le=20)
+
+
+class ConfigureResponse(BaseModel):
+    scenario: str
+    draft: str
+    sources: List[str]
+    grounded: bool
+    top_score: float
+    latency_ms: Optional[int] = None
+
+
+@app.post("/api/configure", response_model=ConfigureResponse,
+          dependencies=[Depends(_enforce_rate_limit)])
+def configure(req: ConfigureRequest):
+    """Produce a grounded, NON-BINDING draft offer for a customer scenario (RF4/UC4)."""
+    from src.nextpulse.configurator import OfferConfigurator
+    try:
+        return OfferConfigurator(app.state.rag).configure(
+            req.scenario, needs=req.needs, k=req.k
+        )
+    except RateLimitError:
+        logger.warning("LLM rate limit / quota exceeded on /api/configure")
+        raise HTTPException(
+            status_code=429,
+            detail=("Limite di richieste del modello LLM raggiunto (quota del piano gratuito). "
+                    "Riprova più tardi o configura un modello con credito disponibile."),
+        )
+    except Exception:
+        logger.exception("configure pipeline failed")
+        raise HTTPException(
+            status_code=502,
+            detail="Il servizio di generazione non è momentaneamente disponibile. Riprova tra poco.",
+        )
+
+
 # ── Bandi / Gare d'Appalto (Portale Appalti MIT) ─────────────────────────────────
 
 class BandiQueryRequest(BaseModel):
