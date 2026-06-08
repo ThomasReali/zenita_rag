@@ -100,7 +100,7 @@ GDPR** (audit log + anonimizzazione notturna + **pseudonimizzazione reversibile 
 Offerta**), **cache risposte** + **rate-limiting per IP**, **re-ranking cross-encoder** opt-in, **OCR**
 delle scansioni (Tesseract/ita, opt-in), **citazioni con link ufficiale MIT** (enrichment da manifest),
 **login + ruolo verificato server-side** (opt-in), **hardening** (indicizzazione incrementale, retry,
-logging) e **162 test**.
+logging) e **167 test**.
 
 ### Sezione Gare d'Appalto (Portale Appalti MIT) — scraping live + RAG dedicato
 Sezione separata dal chatbot principale (switch nella command rail). All'apertura esegue lo
@@ -173,6 +173,7 @@ Tutto in `.env` (vedi `.env.example` — fonte di verità in [MODELLO_DATI.md §
 | `RETRIEVAL_K` | `5` | chunk recuperati per query |
 | `SCORE_THRESHOLD` | `0.82` | sotto soglia → "non in documentazione" (gate anti-allucinazione) |
 | `AMBIGUITY_JUDGE` | `1` | giudice LLM del conflitto tra fonti (→ discrezione) |
+| `INTENT_GATE` | `1` | messaggi fuori dominio/colloquiali → risposta semplice senza fonti né chrome |
 | `RESPONSE_CACHE_ENABLED` | `1` | cache risposte (TTL+LRU) per domande ripetute (latenza/costo) |
 | `RESPONSE_CACHE_SIZE` / `RESPONSE_CACHE_TTL_SECONDS` | `256` / `1800` | dimensione e durata cache |
 | `RERANK_ENABLED` | `0` | re-ranking cross-encoder dei candidati (opt-in: scarica un modello) |
@@ -214,7 +215,7 @@ uv run python scripts/anonymize_logs.py --dry-run    # anteprima; poi senza --dr
 # alternative
 streamlit run scripts/app.py             # vecchia UI Streamlit
 uv run python scripts/query_rag.py --role bid_manager  # CLI (multi-turn, profilo selezionabile)
-uv run pytest tests/ -q                  # 162 test (LLM mockato)
+uv run pytest tests/ -q                  # 167 test (LLM mockato)
 
 # (opzionale) abilita il NER di Microsoft Presidio per il masking PII di nomi/organizzazioni
 uv sync --extra pii && uv run python -m spacy download it_core_news_lg
@@ -281,7 +282,7 @@ NextPulse/
 │   ├── query_rag.py           # Q&A da terminale (multi-turn, --role)
 │   ├── anonymize_logs.py      # job notturno GDPR: anonimizza i log oltre la retention
 │   └── app.py                 # UI Streamlit alternativa (deprecata)
-├── tests/test_rag.py          # suite principale (162 test totali, LLM mockato)
+├── tests/test_rag.py          # suite principale (167 test totali, LLM mockato)
 ├── data/                      # documenti da indicizzare (gitignored)
 ├── qdrant_data/               # store Qdrant embedded (gitignored)
 ├── KNOWLEDGE/                 # corpus reale fornito (PDF normativi, CSV/XLSX/DOCX/JSON)

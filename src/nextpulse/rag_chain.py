@@ -110,6 +110,29 @@ ESTRATTI:
 Risposta:"""
 
 
+# Intent classifier: is the message a real domain request, or off-topic / chit-chat?
+INTENT_PROMPT = """\
+Sei un classificatore per l'assistente di Engine SpA, che risponde SOLO su: Traffic Enforcement \
+(autovelox, ZTL/varchi, semafori), normativa e decreti MIT, Codice della Strada, gare d'appalto, \
+prodotti e configurazioni per la Pubblica Amministrazione.
+
+Il messaggio dell'utente qui sotto è una DOMANDA o RICHIESTA su questi temi, oppure è ALTRO \
+(saluto, ringraziamento, convenevoli, messaggio vago o vuoto, tema fuori contesto)?
+
+Rispondi con UNA sola parola: DOMINIO se è una richiesta sui temi sopra, ALTRO in ogni altro caso.
+
+MESSAGGIO: {q}
+Risposta:"""
+
+# Plain conversational persona for off-topic messages (no documents, no citations).
+PLAIN_SYSTEM_PROMPT = """\
+Sei l'assistente commerciale di Engine SpA (Traffic Enforcement). Il messaggio dell'utente NON è \
+una domanda tecnica o normativa: rispondi in modo cortese, breve e colloquiale (un saluto, un \
+chiarimento, o un invito a formulare la domanda). NON citare documenti, NON inventare dati. Se \
+sembra che l'utente voglia chiedere qualcosa, invitalo gentilmente a specificare di cosa ha bisogno \
+(es. requisiti di gara, normativa, prodotti, configurazioni)."""
+
+
 class RAGChain:
     """Retrieval-Augmented Generation chain with conversational memory"""
 
@@ -376,6 +399,28 @@ class RAGChain:
         except Exception:
             return True  # fail-safe: prefer discretion (legal caution)
 
+    def _is_domain_query(self, text: str, session=None) -> bool:
+        """LLM micro-classifier: is `text` a real domain request? Fail-safe to True (domain),
+        so a classifier hiccup never strips grounding from a genuine question."""
+        try:
+            out = self._complete(
+                [{"role": "user", "content": INTENT_PROMPT.format(q=text)}],
+                session=session, temperature=0.0, max_tokens=3,
+            )
+            return "DOMINIO" in out.upper()
+        except Exception:
+            return True  # fail-safe: prefer the grounded pipeline over a wrong plain reply
+
+    def _plain_reply(self, question: str, session=None) -> str:
+        """Short, document-free conversational reply for an off-topic / chit-chat message."""
+        return self._complete(
+            [
+                {"role": "system", "content": PLAIN_SYSTEM_PROMPT},
+                {"role": "user", "content": question},
+            ],
+            session=session, temperature=0.4, max_tokens=200,
+        )
+
     # ── conversational-memory helpers ────────────────────────────────────────
 
     @staticmethod
@@ -508,12 +553,23 @@ class RAGChain:
         # Step 1 — conversational memory: standalone query (masked for the LLM)
         standalone_query = self._reformulate_query(question, chat_history, session=session)
 
+        # Intent gate (RF10 companion): if this isn't a domain request (greeting / chit-chat /
+        # off-topic), answer plainly — no retrieval, no citations, no governance chrome. Keeps a
+        # "ciao" from being dressed up as a grounded answer with sources.
+        if config.INTENT_GATE and not self._is_domain_query(standalone_query, session):
+            return {
+                "standalone_query": standalone_query, "docs": [], "metas": [],
+                "top_score": 0.0, "obsolete": False, "source_metas": [], "off_topic": True,
+                "mode": "message", "response": self._plain_reply(question, session),
+                "sources": [], "grounded": False, "ambiguous": False, "confidence": None,
+            }
+
         # Step 2 — retrieve (hybrid); gate on dense cosine (stable scale)
         docs, metas, scores, top_score = self.retrieve(standalone_query, k=k)
         distinct = len({str(m.get("source")) for m in metas}) if metas else 0
         base = {
             "standalone_query": standalone_query, "docs": docs, "metas": metas,
-            "top_score": top_score, "obsolete": False, "source_metas": [],
+            "top_score": top_score, "obsolete": False, "source_metas": [], "off_topic": False,
         }
 
         if not docs or top_score < config.SCORE_THRESHOLD:
@@ -584,6 +640,7 @@ class RAGChain:
             "grounded": decision["grounded"],
             "ambiguous": decision["ambiguous"],
             "obsolete": decision["obsolete"],
+            "off_topic": decision.get("off_topic", False),
             "top_score": decision["top_score"],
             "role": rm.current_key if rm else None,
             "confidence": decision["confidence"],

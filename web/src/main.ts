@@ -12,6 +12,7 @@ interface QueryResponse {
   model: string
   grounded: boolean
   ambiguous: boolean
+  off_topic?: boolean
   top_score: number
   role?: string | null
   confidence?: string | null
@@ -434,6 +435,19 @@ function confSegs(level: number, colorClass: string): string {
 }
 
 function addAssistant(r: QueryResponse) {
+  // Off-topic / chit-chat → a plain message bubble: no status header, no confidence bar,
+  // no sources, no excerpts. The governance chrome is reserved for real domain answers.
+  if (r.off_topic) {
+    messages().appendChild(el(`
+      <div class="msg-in mx-auto mt-3 flex max-w-3xl">
+        <div class="w-full max-w-[88%] rounded-2xl rounded-tl-sm border border-haze bg-card/90 px-5 py-4 text-[13.5px] leading-relaxed text-ink shadow-lg shadow-navy-950/20 backdrop-blur-sm">
+          ${renderRich(r.response)}
+        </div>
+      </div>`))
+    scrollDown()
+    return
+  }
+
   // Color + segment level follow the GOVERNANCE outcome (confidence 🟢/🟡/🔴), not the raw
   // top_score: an ambiguous deferral has a high similarity but must NOT look confident.
   const lvl = scoreToLevel(r.top_score)
@@ -643,7 +657,7 @@ function exportConversation() {
     '',
   ]
   transcript.forEach(({ q, r }, i) => {
-    const stato = r.ambiguous ? 'Ambiguo (verifica fonti)' : r.grounded ? 'Grounded' : 'Fuori ambito'
+    const stato = r.off_topic ? 'Conversazione' : r.ambiguous ? 'Ambiguo (verifica fonti)' : r.grounded ? 'Grounded' : 'Fuori ambito'
     lines.push(`## ${i + 1}. ${q}`, '')
     lines.push(r.response, '')
     lines.push(`*Stato: ${stato} · confidenza ${r.top_score.toFixed(2)}${(r.pii_masked ?? 0) > 0 ? ` · ${r.pii_masked} PII pseudonimizzate` : ''}*`, '')

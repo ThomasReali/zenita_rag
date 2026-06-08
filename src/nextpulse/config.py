@@ -35,6 +35,11 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
 
 # RAG
 RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", "5"))
+# Intent gate: classify whether the message is a real domain question (Traffic Enforcement,
+# decrees, gare, products) before grounding. Off-topic/chit-chat/greetings get a plain
+# conversational reply — NO retrieval, NO citations, NO governance chrome. Avoids dressing a
+# "ciao" up as a grounded answer with sources. Fail-safe to domain on classifier error.
+INTENT_GATE = os.getenv("INTENT_GATE", "1") == "1"
 # Response cache (in-memory, per RAGChain): repeated identical questions skip the LLM
 # round-trip — lower latency/cost during demos and a guard against free-tier 429s.
 RESPONSE_CACHE_ENABLED = os.getenv("RESPONSE_CACHE_ENABLED", "1") == "1"

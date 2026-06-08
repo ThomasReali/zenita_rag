@@ -181,6 +181,7 @@ class QueryResponse(BaseModel):
     grounded: bool
     ambiguous: bool
     obsolete: bool = False  # provvedimento pertinente trovato ma ABROGATO (avviso deterministico)
+    off_topic: bool = False  # messaggio fuori dominio/colloquiale → risposta semplice, no chrome
     top_score: float
     role: Optional[str] = None
     confidence: Optional[str] = None
