@@ -26,6 +26,7 @@
 
   --color-signal-green:  #00d4a0;
   --color-signal-amber:  #f59e0b;
+  --color-signal-red:    #f0556d;
   --color-signal-slate:  #5a7094;
 
   --color-ink:   #ddeaff;
@@ -187,6 +188,11 @@
   background: rgba(245,158,11,0.10);
   border: 1px solid rgba(245,158,11,0.20);
 }
+.lozenge-red {
+  color: var(--color-signal-red);
+  background: rgba(240,85,109,0.10);
+  border: 1px solid rgba(240,85,109,0.22);
+}
 .lozenge-slate {
   color: var(--color-signal-slate);
   background: rgba(90,112,148,0.10);
@@ -196,6 +202,7 @@
 /* Light-mode lozenge overrides */
 :root:not(.dark) .lozenge-green { background: rgba(0,180,130,0.08); border-color: rgba(0,180,130,0.25); }
 :root:not(.dark) .lozenge-amber { background: rgba(217,119,6,0.08); border-color: rgba(217,119,6,0.25); }
+:root:not(.dark) .lozenge-red { background: rgba(220,38,60,0.08); border-color: rgba(220,38,60,0.28); }
 :root:not(.dark) .lozenge-slate { background: rgba(71,85,105,0.08); border-color: rgba(71,85,105,0.20); }
 
 /* ── Thinking animation ───────────────────────────────────────────────────── */

@@ -393,8 +393,15 @@ function thinking(): HTMLElement {
   return node
 }
 
-function confSegs(score: number, colorClass: string): string {
-  const lit = Math.round(Math.max(1, Math.min(8, ((score - 0.70) / 0.30) * 8)))
+// Map a retrieval cosine (≈0.70–1.00) to a 1–8 segment level (used only for grounded answers).
+function scoreToLevel(score: number): number {
+  return Math.round(Math.max(1, Math.min(8, ((score - 0.70) / 0.30) * 8)))
+}
+
+// The segment bar shows the GOVERNANCE trust level (0–8), not the raw similarity: an
+// ambiguous/deferred answer must read as low-trust, never as a confident one.
+function confSegs(level: number, colorClass: string): string {
+  const lit = Math.max(0, Math.min(8, Math.round(level)))
   return `<div class="conf-segs ${colorClass}">
     ${Array.from({ length: 8 }, (_, i) =>
       `<span class="conf-seg${i < lit ? ' lit' : ''}"></span>`
@@ -403,11 +410,16 @@ function confSegs(score: number, colorClass: string): string {
 }
 
 function addAssistant(r: QueryResponse) {
+  // Color + segment level follow the GOVERNANCE outcome (confidence 🟢/🟡/🔴), not the raw
+  // top_score: an ambiguous deferral has a high similarity but must NOT look confident.
+  const lvl = scoreToLevel(r.top_score)
   const st = r.ambiguous
-    ? { borderColor: 'border-l-[var(--color-signal-amber)]', lozenge: 'lozenge-amber', label: 'Ambiguo', sublabel: 'verifica fonti', segsColor: 'text-[var(--color-signal-amber)]' }
-    : r.grounded
-      ? { borderColor: 'border-l-[var(--color-signal-green)]', lozenge: 'lozenge-green', label: 'Grounded', sublabel: '', segsColor: 'text-[var(--color-signal-green)]' }
-      : { borderColor: 'border-l-[var(--color-signal-slate)]', lozenge: 'lozenge-slate', label: 'Fuori ambito', sublabel: 'nessuna fonte rilevante', segsColor: 'text-[var(--color-signal-slate)]' }
+    ? { borderColor: 'border-l-[var(--color-signal-red)]', lozenge: 'lozenge-red', label: 'Ambiguo', sublabel: 'fonti in conflitto — rimanda al Bid Manager', segsColor: 'text-[var(--color-signal-red)]', level: 2 }
+    : !r.grounded
+      ? { borderColor: 'border-l-[var(--color-signal-slate)]', lozenge: 'lozenge-slate', label: 'Fuori ambito', sublabel: 'nessuna fonte rilevante', segsColor: 'text-[var(--color-signal-slate)]', level: 1 }
+      : r.confidence === 'yellow'
+        ? { borderColor: 'border-l-[var(--color-signal-amber)]', lozenge: 'lozenge-amber', label: 'Grounded', sublabel: 'più fonti — verifica i dati critici', segsColor: 'text-[var(--color-signal-amber)]', level: Math.min(lvl, 6) }
+        : { borderColor: 'border-l-[var(--color-signal-green)]', lozenge: 'lozenge-green', label: 'Grounded', sublabel: 'fonte diretta', segsColor: 'text-[var(--color-signal-green)]', level: lvl }
 
   // Numbered sources
   const sources = r.sources.length
@@ -457,8 +469,8 @@ function addAssistant(r: QueryResponse) {
           </div>
           ${piiBadge}
           <div class="ml-auto flex items-center gap-2.5">
-            ${confSegs(r.top_score, st.segsColor)}
-            <span class="font-mono text-[10px] text-slatev tabular-nums">${r.top_score.toFixed(2)}</span>
+            ${confSegs(st.level, st.segsColor)}
+            <span class="font-mono text-[10px] text-slatev tabular-nums" title="Similarità di retrieval">${r.top_score.toFixed(2)}</span>
           </div>
         </div>
 
