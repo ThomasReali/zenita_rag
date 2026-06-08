@@ -12,9 +12,14 @@ Supported content types: PDF, TXT/MD, DOCX, CSV, XLSX, JSON.
 """
 import io
 import json
+import logging
 import re
 from pathlib import Path
 from typing import List, Optional, Tuple
+
+from src.nextpulse import config
+
+logger = logging.getLogger("nextpulse.docproc")
 
 SUPPORTED = {".pdf", ".txt", ".md", ".docx", ".csv", ".xlsx", ".json"}
 # Files that are metadata *about* the corpus, not content to embed.
@@ -59,10 +64,61 @@ class DocumentProcessor:
                 reader.decrypt("")  # many MIT decrees use an empty owner password
             except Exception:
                 pass
-        return [
+        pages = [
             (i, page.extract_text() or "")
             for i, page in enumerate(reader.pages, start=1)
         ]
+        # Opt-in OCR fallback: fill pages that came back (near) empty — i.e. scans/images.
+        if config.OCR_ENABLED:
+            pages = self._ocr_fill(file_path, pages)
+        return pages
+
+    def _ocr_fill(
+        self, file_path: str, pages: List[Tuple[int, str]]
+    ) -> List[Tuple[int, str]]:
+        """Render the text-poor pages (scanned PDFs) and OCR them with Tesseract.
+
+        Degrades gracefully: if the OCR stack (pymupdf/pytesseract/PIL) or the Tesseract
+        binary is unavailable, the original (empty) pages are returned unchanged and the
+        document is simply skipped downstream, exactly as before OCR existed (RNF5)."""
+        weak = [
+            idx for idx, (_, text) in enumerate(pages)
+            if len((text or "").strip()) < config.OCR_PAGE_MIN_CHARS
+        ]
+        if not weak:
+            return pages
+        try:
+            import pytesseract
+            from PIL import Image
+            try:
+                import fitz  # PyMuPDF (preferred import name)
+            except ImportError:
+                import pymupdf as fitz
+        except Exception:
+            logger.warning("OCR_ENABLED but the 'ocr' extra is missing "
+                            "(uv sync --extra ocr); leaving scanned pages empty")
+            return pages
+        if config.TESSERACT_CMD:
+            pytesseract.pytesseract.tesseract_cmd = config.TESSERACT_CMD
+        try:
+            doc = fitz.open(file_path)
+        except Exception:
+            logger.exception("OCR: cannot open %s for rendering", file_path)
+            return pages
+
+        out = list(pages)
+        for idx in weak:
+            page_no = pages[idx][0]
+            try:
+                pix = doc[page_no - 1].get_pixmap(dpi=config.OCR_DPI)
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                text = pytesseract.image_to_string(img, lang=config.OCR_LANG)
+                if text and text.strip():
+                    out[idx] = (page_no, text)
+            except Exception:
+                logger.exception("OCR failed on page %d of %s", page_no, file_path)
+        doc.close()
+        return out
 
     def load_pdf(self, file_path: str) -> str:
         return "\n".join(text for _, text in self.load_pdf_pages(file_path))

@@ -55,6 +55,18 @@ RERANK_CANDIDATES = int(os.getenv("RERANK_CANDIDATES", "20"))
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "1") == "1"
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 RATE_LIMIT_WINDOW_SECONDS = float(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+
+# OCR fallback for scanned PDFs (opt-in). Pages whose extractable text is below
+# OCR_PAGE_MIN_CHARS are rendered (PyMuPDF) and read with Tesseract — recovering the ~19
+# scanned decrees that ingestion otherwise skips. OFF by default: needs the `ocr` extra
+# (pymupdf + pytesseract + pillow) AND the Tesseract binary with the Italian language pack.
+OCR_ENABLED = os.getenv("OCR_ENABLED", "0") == "1"
+OCR_LANG = os.getenv("OCR_LANG", "ita")
+OCR_DPI = int(os.getenv("OCR_DPI", "300"))
+OCR_PAGE_MIN_CHARS = int(os.getenv("OCR_PAGE_MIN_CHARS", "100"))
+# Explicit path to tesseract.exe when it is not on PATH (typical on Windows installs, e.g.
+# C:\\Program Files\\Tesseract-OCR\\tesseract.exe). Empty → rely on PATH.
+TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")
 # Governance gate: top cosine score below this → deterministic "not in documentation"
 # (no generation). Tuned for multilingual-e5-small (in-domain ≈0.85–0.90, off-topic ≈0.80).
 SCORE_THRESHOLD = float(os.getenv("SCORE_THRESHOLD", "0.82"))
