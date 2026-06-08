@@ -3,7 +3,7 @@
 > **Stato:** rev. 5 (modulo Bandi/Gare MIT + hardening sicurezza API) · **Data:** 2026-06-07 · **Owner:** team NextPulse
 > Documento di lavoro interno. Definisce le entità, i formati di input, lo schema dei chunk
 > indicizzati e gli oggetti scambiati dalla pipeline RAG. **È l'unica fonte di verità per la
-> configurazione (§5).** Compagno di [REQUISITI.md](./REQUISITI.md) e [BRIEF.md](./BRIEF.md).
+> configurazione (§5).** Compagno di [REQUISITI.md](./REQUISITI.md) e [ARCHITETTURA.md](./ARCHITETTURA.md).
 
 ## 1. Panoramica del flusso del dato
 

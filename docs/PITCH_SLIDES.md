@@ -127,8 +127,8 @@
 ## Slide 7 — Roadmap  ·  ~20"
 
 **Sullo schermo**
-- **As-Is (MVP, funzionante):** ingestion multi-formato · retrieval ibrido (Qdrant) · doppia governance · UI enterprise · 40 test
-- **To-Be:** **live-fetch** dalle gazzette ufficiali · **capacità agentiche** (config offerta) · **multilingua** (mercati esteri del gruppo)
+- **As-Is (funzionante):** ingestion multi-formato + **OCR** · retrieval ibrido (Qdrant) · **tripla governance** (anti-allucinazione + ambiguità + intento) · **streaming** · **configuratore d'offerta** · **citazioni con link ufficiale MIT** · **login/ruolo server-side** · UI enterprise · **167 test**
+- **To-Be:** **live-fetch** dalle gazzette ufficiali · **capacità agentiche** evolute · **multilingua** (mercati esteri del gruppo)
 
 **Visual:** timeline a due colonne As-Is → To-Be (freccia navy).
 
@@ -159,5 +159,41 @@
 | Sec.  | 20 | 35 | 25 | 45 | 15 | 30 | 20 | 10 |
 
 **Totale ≈ 3'00".** Slide-chiave da non saltare: **4 (governance)** e **5 (numeri)**. Tieni l'UI aperta
-su `localhost:8000` per un'eventuale **demo live di 20"**: una query in-dominio (badge *Grounded* + fonti)
+su `localhost:5173` per un'eventuale **demo live di 20"**: una query in-dominio (badge *Grounded* + fonti)
 e una off-dominio (gate onesto).
+
+---
+
+## Appendice A — Demo live (script ~90s)
+
+Avvio: `uvicorn src.nextpulse.api:app --port 8000` + `cd web && npm run dev` → `localhost:5173`.
+
+| # | Query | Cosa mostra |
+|---|-------|-------------|
+| 1 | *"Quali requisiti per l'omologazione degli autovelox?"* | Risposta **grounded** in elenco + **fonti con pagina** e **link ufficiale `mit.gov.it`** |
+| 2 | *"Per sanzionare serve l'omologazione o basta l'approvazione?"* | **Gate ambiguità (🔴)**: fonti in conflitto → discrezione, rimando al Bid Manager |
+| 3 | *"e per la gestione della ZTL?"* (follow-up) | **Memoria conversazionale**: riformula sul turno precedente |
+| 4 | *"Qual è la ricetta della carbonara?"* | **Gate intento**: risposta colloquiale in **box pulita**, niente fonti inventate |
+| 5 | **Configura Offerta** — *"Comune medio: ZTL + controllo velocità"* | **Bozza d'offerta grounded** non vincolante con soluzioni + citazioni |
+
+> Da evidenziare: ogni risposta di dominio è **tracciabile** (file + pagina + link) e il sistema
+> **sa quando tacere** (conflitto) e **quando non è una domanda** (intento). Il punto è la *fiducia*.
+
+## Appendice B — Gestione obiezioni (dalla discovery)
+
+- *"Perché dovrei fidarmi dell'output?"* → Risponde **solo** dai documenti, **cita file/pagina/link** e
+  **rifiuta** quando non ha fonti (gate deterministico, non solo prompt).
+- *"E se i dati sono sbagliati/sintetici?"* → Mostriamo la fonte (link alla pagina ufficiale): l'umano
+  verifica in 1 click; sui dati critici l'assistente lo dichiara.
+- *"È l'ennesimo chatbot?"* → No: hybrid retrieval su corpus reale + tripla governance + UI con confidenza/fonti.
+- *"E la privacy / il GDPR sui log?"* → **Privacy by design**: identificatori opachi, audit log e
+  **anonimizzazione notturna** (user_id/session_id → NULL oltre 6 mesi).
+- *"E i dati mandati all'LLM esterno?"* → **Pseudonimizzazione reversibile** (Art. 32): PII mascherata in
+  locale **prima** dell'invio e re-identificata al ritorno; l'LLM vede solo token.
+
+## Appendice C — Numeri che dimostrano l'execution
+
+528 documenti indicizzati · **4.810 chunk** (hybrid dense+BM25 su Qdrant) · **tripla governance**
+(anti-allucinazione + ambiguità + intento) · 3 profili ruolo + confidence · OCR scansioni · citazioni
+con **link ufficiale MIT** · audit log + anonimizzazione GDPR + pseudonimizzazione PII (Art. 32) ·
+login/ruolo server-side · **167 test verdi** · UI FastAPI + TS/Tailwind · embedding **locali** + LLM via OpenAI.

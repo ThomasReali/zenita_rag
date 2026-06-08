@@ -8,8 +8,8 @@
 
 ## 2026-06-08 — Iterazione miglioramenti (performance, copertura KB, sicurezza, UX)
 
-Sessione ampia: prima autonoma (su piano d'azione [ACTION_PLAN.md](./ACTION_PLAN.md)), poi
-interattiva con conferma dell'utente sui punti aperti.
+Sessione ampia: prima autonoma su un piano d'azione condiviso, poi interattiva con conferma
+dell'utente sui punti aperti.
 
 ### Performance & UX
 - **18:01 — Gate di intento**: classificatore LLM che distingue le richieste di dominio dai

@@ -4,7 +4,7 @@ Sistema **RAG** (Retrieval-Augmented Generation) che risponde alle domande del t
 commerciale **solo** sulla base della documentazione aziendale, **cita sempre le fonti** e
 **dice quando non sa**. Stack ibrido: vector DB locale + embedding locali + LLM via **OpenRouter**.
 
-> **Documenti di progetto:** [ARCHITETTURA.md](./docs/ARCHITETTURA.md) (funzionamento + stack) · [REQUISITI.md](./docs/REQUISITI.md) · [MODELLO_DATI.md](./docs/MODELLO_DATI.md) · [CHANGELOG.md](./docs/CHANGELOG.md) · [INTERVENTI_FUTURI.md](./docs/INTERVENTI_FUTURI.md) · [KPI.md](./docs/KPI.md) · [PITCH.md](./docs/PITCH.md) · [BUSINESS_PROPOSAL.md](./docs/BUSINESS_PROPOSAL.md)
+> **Documenti di progetto:** [ARCHITETTURA.md](./docs/ARCHITETTURA.md) (funzionamento + stack) · [REQUISITI.md](./docs/REQUISITI.md) · [MODELLO_DATI.md](./docs/MODELLO_DATI.md) · [CHANGELOG.md](./docs/CHANGELOG.md) · [INTERVENTI_FUTURI.md](./docs/INTERVENTI_FUTURI.md) · [KPI.md](./docs/KPI.md) · [PITCH_SLIDES.md](./docs/PITCH_SLIDES.md) · [BUSINESS_PROPOSAL.md](./docs/BUSINESS_PROPOSAL.md)
 > **Evento:** Next Pulse — Workshop AI, 6-7 giugno 2026, Live Campus Chieti · **Livello target:** Avanzato (prototipo RAG)
 
 ---
@@ -243,7 +243,7 @@ Dettaglio in [REQUISITI.md §8](./docs/REQUISITI.md).
 
 ## 8. Roadmap
 
-**Fatto (iterazione miglioramenti — vedi [docs/ACTION_PLAN.md](./docs/ACTION_PLAN.md)):**
+**Fatto (iterazione miglioramenti — vedi [docs/CHANGELOG.md](./docs/CHANGELOG.md)):**
 **streaming risposte (SSE)** `POST /api/query/stream` · **cache risposte** (TTL+LRU) ·
 **re-ranking cross-encoder** (opt-in) · **rate-limiting per IP** · **mini eval-harness** (`scripts/eval_rag.py`) ·
 **OCR scansioni** (Tesseract/ita → 19 decreti recuperati, +243 chunk) ·
@@ -287,8 +287,9 @@ NextPulse/
 ├── qdrant_data/               # store Qdrant embedded (gitignored)
 ├── KNOWLEDGE/                 # corpus reale fornito (PDF normativi, CSV/XLSX/DOCX/JSON)
 ├── docs/
-│   ├── REQUISITI.md · MODELLO_DATI.md · KPI.md          # requisiti, modello dati, metriche
-│   └── PITCH.md · PITCH_SLIDES.md · BUSINESS_PROPOSAL.md  # materiali pitch
+│   ├── ARCHITETTURA.md · REQUISITI.md · MODELLO_DATI.md · KPI.md   # funzionamento, requisiti, dati, metriche
+│   ├── CHANGELOG.md · INTERVENTI_FUTURI.md                         # interventi datati + backlog
+│   └── PITCH_SLIDES.md · BUSINESS_PROPOSAL.md                      # materiali pitch
 ├── .env.example · pyproject.toml · README.md
 ```
 
