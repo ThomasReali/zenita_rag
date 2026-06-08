@@ -138,6 +138,16 @@ PII_BACKEND = os.getenv("PII_BACKEND", "auto")
 # spaCy model used by the Presidio backend (download separately, e.g. it_core_news_lg).
 PII_SPACY_MODEL = os.getenv("PII_SPACY_MODEL", "it_core_news_lg")
 
+# ── Authentication (opt-in) — server-side verified role (RNF6) ─────────────────
+# When enabled, the active role comes from a signed session (login), NOT from the client
+# request: role-awareness becomes a security control, not just governance. OFF by default so
+# the demo flow (client-selected role) is unchanged. AUTH_USERS = "user:password:role,..."
+# (role ∈ ROLES). AUTH_SECRET signs the stateless session token (HMAC) — CHANGE IT in prod.
+AUTH_ENABLED = os.getenv("AUTH_ENABLED", "0") == "1"
+AUTH_SECRET = os.getenv("AUTH_SECRET", "nextpulse-dev-secret-change-me")
+AUTH_USERS = os.getenv("AUTH_USERS", "")
+AUTH_TOKEN_TTL_SECONDS = int(os.getenv("AUTH_TOKEN_TTL_SECONDS", "28800"))  # 8h
+
 
 def ensure_directories() -> None:
     """Create required directories (call once at startup, not on import)."""

@@ -19,14 +19,14 @@ from typing import List, Optional
 # Allow `uvicorn src.nextpulse.api:app` from the project root.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from fastapi import Depends, FastAPI, HTTPException, Request  # noqa: E402
+from fastapi import Depends, FastAPI, HTTPException, Request, Response  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from openai import RateLimitError  # noqa: E402 — distinguish LLM quota/rate-limit from outages
 from fastapi.responses import StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
-from src.nextpulse import config  # noqa: E402
+from src.nextpulse import auth, config  # noqa: E402
 from src.nextpulse.rag_chain import RAGChain  # noqa: E402
 from src.nextpulse.query_log import QueryLog  # noqa: E402
 from src.nextpulse.ratelimit import SlidingWindowLimiter  # noqa: E402
@@ -69,6 +69,20 @@ def _enforce_rate_limit(request: Request) -> None:
             detail=("Troppe richieste in un breve intervallo. Attendi qualche secondo "
                     "prima di riprovare."),
         )
+
+_SESSION_COOKIE = "np_session"
+
+
+def _auth_role(request: Request) -> Optional[str]:
+    """When AUTH_ENABLED, resolve the active role from the signed session cookie (401 if
+    missing/invalid). When disabled, returns None and the caller falls back to the client role."""
+    if not config.AUTH_ENABLED:
+        return None
+    payload = auth.verify_token(request.cookies.get(_SESSION_COOKIE))
+    if not payload:
+        raise HTTPException(status_code=401, detail="Autenticazione richiesta: effettua il login.")
+    return payload.get("r")
+
 
 # ── Input limits (defense-in-depth: reject oversized/abusive payloads at the edge) ──
 MAX_QUESTION_CHARS = 4000     # a question longer than this is almost certainly abuse
@@ -223,6 +237,44 @@ def roles():
     ]
 
 
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/api/login")
+def login(req: LoginRequest, response: Response):
+    """Validate credentials and set a signed session cookie carrying the verified role."""
+    if not config.AUTH_ENABLED:
+        raise HTTPException(status_code=400, detail="Autenticazione non abilitata.")
+    role = auth.authenticate(req.username, req.password)
+    if role is None:
+        raise HTTPException(status_code=401, detail="Credenziali non valide.")
+    response.set_cookie(
+        _SESSION_COOKIE, auth.issue_token(req.username, role),
+        httponly=True, samesite="lax", max_age=config.AUTH_TOKEN_TTL_SECONDS,
+    )
+    return {"username": req.username, "role": role}
+
+
+@app.post("/api/logout")
+def logout(response: Response):
+    response.delete_cookie(_SESSION_COOKIE)
+    return {"ok": True}
+
+
+@app.get("/api/me")
+def me(request: Request):
+    """Auth status for the UI: whether auth is enabled and, if so, the logged-in identity."""
+    if not config.AUTH_ENABLED:
+        return {"auth_enabled": False}
+    payload = auth.verify_token(request.cookies.get(_SESSION_COOKIE))
+    if not payload:
+        return {"auth_enabled": True, "authenticated": False}
+    return {"auth_enabled": True, "authenticated": True,
+            "username": payload.get("u"), "role": payload.get("r")}
+
+
 @app.get("/api/privacy")
 def privacy():
     """Data-governance snapshot: retention policy + query-log anonymization status."""
@@ -239,14 +291,16 @@ def privacy():
 
 @app.post("/api/query", response_model=QueryResponse,
           dependencies=[Depends(_enforce_rate_limit)])
-def query(req: QueryRequest):
+def query(req: QueryRequest, auth_role: Optional[str] = Depends(_auth_role)):
     rag = app.state.rag
+    # With auth on, the role is the server-verified one (auth_role); otherwise the client's.
+    role = auth_role or req.role
     try:
         result = rag.query(
             req.question,
             chat_history=[m.model_dump() for m in req.history],
             k=req.k,
-            role=req.role,
+            role=role,
         )
     except RateLimitError:
         # LLM quota / rate limit exhausted (e.g. OpenRouter free-models-per-day): this is an
@@ -287,7 +341,7 @@ def _log_query_result(rag: RAGChain, result: dict, req: "QueryRequest") -> None:
 
 
 @app.post("/api/query/stream", dependencies=[Depends(_enforce_rate_limit)])
-def query_stream(req: QueryRequest):
+def query_stream(req: QueryRequest, auth_role: Optional[str] = Depends(_auth_role)):
     """Streaming variant of /api/query (Server-Sent Events).
 
     Each line is `data: {json}` with a `phase` field: `meta` (gates decided),
@@ -295,12 +349,13 @@ def query_stream(req: QueryRequest):
     role layer, PII masking and cache are identical to /api/query — only the delivery differs.
     """
     rag = app.state.rag
+    role = auth_role or req.role
     history = [m.model_dump() for m in req.history]
 
     def gen():
         try:
             for phase, payload in rag.stream_query(
-                req.question, chat_history=history, k=req.k, role=req.role
+                req.question, chat_history=history, k=req.k, role=role
             ):
                 if phase == "done":
                     _log_query_result(rag, payload, req)

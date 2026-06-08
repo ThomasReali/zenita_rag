@@ -37,6 +37,7 @@ const ROLE_HINTS: Record<string, string> = {
   bid_manager: 'Conformità · riferimenti normativi · adempimenti',
 }
 let currentRole = localStorage.getItem('np_role') || 'presales'
+let roleLocked = false  // true when auth is on: the role comes from the verified session
 
 // Operator shown in the top-right profile chip. Change here to personalize.
 const USER_NAME = 'User'
@@ -264,6 +265,28 @@ function render() {
         </ul>
         <div class="border-t border-white/10 bg-white/[0.03] px-6 py-3 text-[11px] text-navy-300">Trasparenza dichiarata · le fonti sono verificabili ma non garantite.</div>
       </div>
+    </div>
+
+    <!-- C2 — LOGIN (mostrato solo se l'autenticazione è abilitata) -->
+    <div id="login-overlay" class="fixed inset-0 z-[60] hidden items-center justify-center p-4">
+      <div class="absolute inset-0 bg-navy-950/80 backdrop-blur-md"></div>
+      <form id="login-form" class="relative w-full max-w-sm overflow-hidden rounded-2xl border border-white/10 bg-navy-900 text-white shadow-2xl shadow-navy-950/70">
+        <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-azure-400 to-transparent"></div>
+        <div class="flex items-center gap-3 px-6 pt-6">
+          <div class="grid h-10 w-10 place-items-center rounded-xl bg-azure-500/15 text-azure-300 ring-1 ring-azure-400/30">${ICONS.pulse}</div>
+          <div>
+            <div class="font-display text-xl leading-none">NextPulse</div>
+            <div class="mt-1 text-[10px] uppercase tracking-[0.18em] text-navy-300">Accesso · il ruolo è assegnato dal profilo</div>
+          </div>
+        </div>
+        <div class="space-y-3 px-6 py-5">
+          <input id="login-user" autocomplete="username" placeholder="Utente" class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-navy-300 focus:border-azure-400/50 focus:outline-none focus:ring-2 focus:ring-azure-500/20" />
+          <input id="login-pass" type="password" autocomplete="current-password" placeholder="Password" class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-navy-300 focus:border-azure-400/50 focus:outline-none focus:ring-2 focus:ring-azure-500/20" />
+          <p id="login-error" class="hidden text-[12px] text-red-400"></p>
+          <button type="submit" class="w-full rounded-xl bg-azure-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-azure-500/20 transition hover:bg-azure-600 active:scale-95">Accedi</button>
+          <p class="text-center text-[10.5px] text-navy-300">Demo: <span class="font-mono">bid / bid123</span> · <span class="font-mono">presales / presales123</span> · <span class="font-mono">sales / sales123</span></p>
+        </div>
+      </form>
     </div>
   </div>`
 
@@ -643,6 +666,63 @@ function exportConversation() {
   URL.revokeObjectURL(url)
 }
 
+// C2 — when auth is enabled the role is bound to a verified session (not client-chosen).
+async function initAuth() {
+  let me: { auth_enabled?: boolean; authenticated?: boolean; role?: string; username?: string }
+  try {
+    me = await (await fetch('/api/me')).json()
+  } catch {
+    return  // backend unreachable → behave as before (client role)
+  }
+  if (!me?.auth_enabled) return            // auth off → unchanged demo flow
+  if (me.authenticated && me.role) {
+    applyAuth(me.role)
+    return
+  }
+  showLogin()
+}
+
+function applyAuth(role: string) {
+  currentRole = role
+  localStorage.setItem('np_role', role)
+  roleLocked = true
+}
+
+function showLogin() {
+  const overlay = $('#login-overlay')
+  overlay.classList.remove('hidden')
+  overlay.classList.add('flex')
+  const form = $<HTMLFormElement>('#login-form')
+  const err = $('#login-error')
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault()
+    err.classList.add('hidden')
+    const username = $<HTMLInputElement>('#login-user').value.trim()
+    const password = $<HTMLInputElement>('#login-pass').value
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      })
+      if (!res.ok) {
+        const e2 = await res.json().catch(() => ({}))
+        err.textContent = e2.detail || 'Credenziali non valide'
+        err.classList.remove('hidden')
+        return
+      }
+      const data = await res.json()
+      applyAuth(data.role)
+      overlay.classList.add('hidden')
+      overlay.classList.remove('flex')
+      await loadRoles()  // repaint the (now locked) role selector with the verified role
+    } catch {
+      err.textContent = 'Errore di rete'
+      err.classList.remove('hidden')
+    }
+  })
+}
+
 async function loadStatus() {
   try {
     const s = await (await fetch('/api/status')).json()
@@ -732,9 +812,16 @@ async function loadRoles() {
   })
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') open(false) })
 
+  // When auth is on, the role is assigned by the verified session → lock the selector.
+  if (roleLocked) {
+    btn.disabled = true
+    btn.classList.add('opacity-70', 'cursor-not-allowed')
+    btn.title = 'Ruolo assegnato dal login (sicurezza)'
+  }
   paint()
 }
 
 render()
 loadStatus()
-loadRoles()
+// Resolve auth first (may set/lock the role) so the selector paints the verified profile.
+initAuth().then(loadRoles)
