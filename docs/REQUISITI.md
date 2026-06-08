@@ -228,8 +228,8 @@ della challenge (Anceschi, Pastore, Guida) come fonte di requisiti via discovery
 | RF10, RF18 | UC4, UC5 | 4 | ✅ fatto (gate deterministico su score < 0.82) |
 | RF19 | UC4 | 4 | ✅ fatto (gate ambiguità: giudice LLM → discrezione + rimando al Bid Manager) |
 | RF13, RF14, RF15 | UC1, UC6 | 5 | ✅ fatto (FastAPI + frontend TS/Tailwind; RF15 = documenti distinti) |
-| RF16 | — | 5/6 | parziale (reset + domande di esempio fatti; export rinviato) |
-| RF17 | UC5 | 4/7 | da fare |
+| RF16 | — | 5/6 | ✅ fatto (reset + domande di esempio + **export conversazione in Markdown**; `web/src/main.ts` → `exportConversation`) |
+| RF17 | UC5 | 4/7 | ✅ fatto (pannello **"Limiti del sistema"** in UI: pulsante + lista `LIMITS`; `web/src/main.ts`) |
 | RF20 | UC1, UC3 | extra | ✅ fatto (3 profili + selettore UI + `confidence`; `role_manager.py`) |
 | RF21, RF22 | tutti | extra | ✅ fatto (query log SQLite + job notturno di anonimizzazione GDPR; `/api/privacy`) |
 | RF23 | tutti | extra | ✅ fatto (pseudonimizzazione reversibile PII; backend regex + Presidio opzionale) |
