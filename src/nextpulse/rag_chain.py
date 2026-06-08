@@ -471,13 +471,37 @@ class RAGChain:
             return None
 
     def _run_pipeline(self, question, chat_history, k, rm, session, t0) -> dict:
+        decision = self._decide(question, chat_history, k, rm, session)
+        if decision["mode"] == "generate":
+            raw = self._complete(
+                [
+                    {"role": "system", "content": decision["system_prompt"]},
+                    {"role": "user", "content": question},
+                ],
+                session=session, temperature=0.3, max_tokens=decision["max_tokens"],
+            )
+            response = self._finalize_generation(raw, decision, rm)
+        else:
+            response = decision["response"]
+        return self._assemble_result(question, decision, response, rm, session, t0)
+
+    def _decide(self, question, chat_history, k, rm, session) -> dict:
+        """Run the deterministic part of the pipeline (reformulate → retrieve → gates) and
+        return a decision. `mode == "message"` carries a ready deterministic response (the
+        three 🔴 branches); `mode == "generate"` carries the system prompt to feed the LLM.
+
+        Single source of truth shared by `query()` (blocking) and `stream_query()` (SSE), so
+        the governance gates behave identically whether or not the answer is streamed."""
         # Step 1 — conversational memory: standalone query (masked for the LLM)
         standalone_query = self._reformulate_query(question, chat_history, session=session)
 
         # Step 2 — retrieve (hybrid); gate on dense cosine (stable scale)
         docs, metas, scores, top_score = self.retrieve(standalone_query, k=k)
         distinct = len({str(m.get("source")) for m in metas}) if metas else 0
-        obsolete = False
+        base = {
+            "standalone_query": standalone_query, "docs": docs, "metas": metas,
+            "top_score": top_score, "obsolete": False,
+        }
 
         if not docs or top_score < config.SCORE_THRESHOLD:
             # Gate 1 (RF10) — nothing relevant among the *current* (active) documents.
@@ -487,11 +511,12 @@ class RAGChain:
             notice = self._obsolete_notice(standalone_query, k)
             if notice is not None:
                 response, sources = notice
-                grounded, ambiguous, confidence, obsolete = False, False, "red", True
+                base.update(mode="message", response=response, sources=sources,
+                            grounded=False, ambiguous=False, confidence="red", obsolete=True)
             else:
-                grounded, ambiguous, confidence = False, False, "red"
-                sources: List[str] = []
                 response = rm.format_response("", [], "red") if rm else self.no_context_message
+                base.update(mode="message", response=response, sources=[],
+                            grounded=False, ambiguous=False, confidence="red")
         elif (config.AMBIGUITY_JUDGE and 2 <= distinct <= config.AMBIGUITY_MAX_DISTINCT
               and not self._dominant_source(metas, scores)
               and self._detect_conflict(standalone_query, docs, metas, session=session)):
@@ -503,17 +528,16 @@ class RAGChain:
             #    a broad/under-specified query, not a contradiction (e.g. a cross-topic question
             #    pulling in several parallel autovelox decrees) → answer grounded, don't defer;
             #  - one source DOMINATES the fused ranking (no real ambiguity to arbitrate).
-            grounded, ambiguous, confidence = False, True, "red"
-            sources = self._format_sources(metas)
             # Discretion (RF19) is a distinct outcome from "no source": always cite the
             # conflicting provvedimenti and defer to the Bid Manager, for EVERY role — the
             # role-specific red template would otherwise hide the sources.
-            response = AMBIGUITY_MESSAGE + "\n\n" + self._ambiguity_block(metas)
+            base.update(mode="message",
+                        response=AMBIGUITY_MESSAGE + "\n\n" + self._ambiguity_block(metas),
+                        sources=self._format_sources(metas),
+                        grounded=False, ambiguous=True, confidence="red")
         else:
             # Generate on labeled, cited context. 🟢 single source · 🟡 combined sources.
-            grounded, ambiguous = True, False
             confidence = "yellow" if distinct >= 2 else "green"
-            sources = self._format_sources(metas)
             context_str = self._build_context(docs, metas)
             if rm:
                 system_prompt = rm.get_system_prompt() + "\n\nDOCUMENTI AZIENDALI:\n" + context_str
@@ -523,37 +547,129 @@ class RAGChain:
                     context_str=context_str, standalone_query=standalone_query
                 )
                 max_tokens = None
-            raw = self._complete(
-                [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": question},
-                ],
-                session=session, temperature=0.3, max_tokens=max_tokens,
-            )
-            raw = self._normalize_citations(raw)  # force bare [N] inline citations
-            response = rm.format_response(raw, metas, confidence) if rm else raw
+            base.update(mode="generate", system_prompt=system_prompt, max_tokens=max_tokens,
+                        sources=self._format_sources(metas),
+                        grounded=True, ambiguous=False, confidence=confidence)
+        return base
 
+    def _finalize_generation(self, raw: str, decision: dict, rm) -> str:
+        """Post-process a raw LLM answer: force bare [N] citations, then adapt to the role."""
+        raw = self._normalize_citations(raw)
+        return rm.format_response(raw, decision["metas"], decision["confidence"]) if rm else raw
+
+    def _assemble_result(self, question, decision, response, rm, session, t0) -> dict:
+        """Build the stable QueryResult dict from a decision + the final answer text."""
         latency_ms = int((time.perf_counter() - t0) * 1000)
         result = {
             "query": question,
-            "standalone_query": standalone_query,
+            "standalone_query": decision["standalone_query"],
             "response": response,
-            "context": docs,
-            "sources": sources,
+            "context": decision["docs"],
+            "sources": decision["sources"],
             "model": self.model,
-            "grounded": grounded,
-            "ambiguous": ambiguous,
-            "obsolete": obsolete,
-            "top_score": top_score,
+            "grounded": decision["grounded"],
+            "ambiguous": decision["ambiguous"],
+            "obsolete": decision["obsolete"],
+            "top_score": decision["top_score"],
             "role": rm.current_key if rm else None,
-            "confidence": confidence,
+            "confidence": decision["confidence"],
             "pii_masked": session.masked_count if session is not None else 0,
             "latency_ms": latency_ms,
             "cached": False,
         }
         logger.info(
             "query role=%s grounded=%s ambiguous=%s obsolete=%s confidence=%s top_score=%.3f sources=%d pii_masked=%d latency_ms=%d",
-            result["role"], grounded, ambiguous, obsolete, confidence, top_score, len(sources),
+            result["role"], result["grounded"], result["ambiguous"], result["obsolete"],
+            result["confidence"], result["top_score"], len(result["sources"]),
             result["pii_masked"], result["latency_ms"],
         )
         return result
+
+    # ── streaming (SSE) ───────────────────────────────────────────────────────
+
+    def _stream_completion(self, messages: List[dict], *, session=None, **kwargs):
+        """Yield answer deltas from the LLM. Input is masked exactly like `_complete`, but
+        the deltas are NOT un-masked here — a placeholder token (e.g. [PERSON_1]) can span two
+        chunks, so the caller accumulates the full text and un-masks it once at the end."""
+        if session is not None:
+            messages = [{**m, "content": session.mask(m["content"])} for m in messages]
+        stream = self.client.chat.completions.create(
+            model=self.model, messages=messages, stream=True, **kwargs
+        )
+        for chunk in stream:
+            choices = getattr(chunk, "choices", None)
+            if not choices:
+                continue
+            delta = getattr(choices[0].delta, "content", None)
+            if delta:
+                yield delta
+
+    def stream_query(self, question, chat_history=None, k=None, role=None):
+        """Generator of ``(event, payload)`` for Server-Sent Events. Events:
+
+          ``("meta", {...})``  once, after the gates decide (grounded/confidence/role);
+          ``("token", str)``   answer deltas — token-by-token for the grounded generation
+                               branch, or the whole deterministic message in one shot for the
+                               three 🔴 gated branches;
+          ``("done", dict)``   the final QueryResult (same shape as :meth:`query`).
+
+        Mirrors :meth:`query` (cache, role layer, PII session, governance gates) so the only
+        difference the client sees is *how* the answer arrives, not *what*."""
+        chat_history = chat_history or []
+        t0 = time.perf_counter()
+
+        cache_key = self._cache_key(question, chat_history, k, role)
+        if self._cache is not None and cache_key is not None:
+            hit = self._cache.get(cache_key)
+            if hit is not None:
+                out = dict(hit)
+                out["cached"] = True
+                out["latency_ms"] = int((time.perf_counter() - t0) * 1000)
+                yield ("meta", {"grounded": out["grounded"], "confidence": out["confidence"],
+                                "role": out.get("role"), "cached": True})
+                yield ("token", out["response"])
+                yield ("done", out)
+                return
+
+        rm = None
+        if role:
+            try:
+                from role_manager import RoleManager, ROLES
+                if role in ROLES:
+                    rm = RoleManager(state_path=None)
+                    rm.set_role(role, persist=False)
+            except Exception:
+                rm = None
+
+        session = self.pseudonymizer.session() if config.PII_MASKING_ENABLED else None
+        try:
+            decision = self._decide(question, chat_history, k, rm, session)
+            yield ("meta", {"grounded": decision["grounded"], "confidence": decision["confidence"],
+                            "role": rm.current_key if rm else None, "cached": False})
+
+            if decision["mode"] == "message":
+                response = decision["response"]
+                yield ("token", response)
+            else:
+                chunks: List[str] = []
+                for delta in self._stream_completion(
+                    [
+                        {"role": "system", "content": decision["system_prompt"]},
+                        {"role": "user", "content": question},
+                    ],
+                    session=session, temperature=0.3, max_tokens=decision["max_tokens"],
+                ):
+                    chunks.append(delta)
+                    yield ("token", delta)
+                raw = "".join(chunks)
+                if session is not None:
+                    raw = session.unmask(raw)  # re-identify PII on the full accumulated text
+                response = self._finalize_generation(raw, decision, rm)
+
+            result = self._assemble_result(question, decision, response, rm, session, t0)
+            if self._cache is not None and cache_key is not None:
+                self._cache.set(cache_key, dict(result))
+            yield ("done", result)
+        finally:
+            if session is not None:
+                session.close()

@@ -265,18 +265,61 @@ def query(req: QueryRequest):
         )
 
     # Query logging must never break the response (GDPR audit trail, best-effort).
-    log = getattr(app.state, "query_log", None)
-    if log is not None:
-        try:
-            logged = dict(result)
-            if config.PII_MASKING_ENABLED:
-                with rag.pseudonymizer.session() as s:
-                    logged["query"] = s.mask(logged.get("query") or "")
-                    logged["standalone_query"] = s.mask(logged.get("standalone_query") or "")
-            log.record_result(logged, session_id=req.session_id, user_id=req.user_id)
-        except Exception:
-            pass
+    _log_query_result(rag, result, req)
     return result
+
+
+def _log_query_result(rag: RAGChain, result: dict, req: "QueryRequest") -> None:
+    """Best-effort GDPR audit log of a query result (never breaks the response)."""
+    log = getattr(app.state, "query_log", None)
+    if log is None:
+        return
+    try:
+        logged = dict(result)
+        if config.PII_MASKING_ENABLED:
+            with rag.pseudonymizer.session() as s:
+                logged["query"] = s.mask(logged.get("query") or "")
+                logged["standalone_query"] = s.mask(logged.get("standalone_query") or "")
+        log.record_result(logged, session_id=req.session_id, user_id=req.user_id)
+    except Exception:
+        pass
+
+
+@app.post("/api/query/stream", dependencies=[Depends(_enforce_rate_limit)])
+def query_stream(req: QueryRequest):
+    """Streaming variant of /api/query (Server-Sent Events).
+
+    Each line is `data: {json}` with a `phase` field: `meta` (gates decided),
+    `token` (answer delta), `done` (final QueryResult), or `error`. The governance gates,
+    role layer, PII masking and cache are identical to /api/query — only the delivery differs.
+    """
+    rag = app.state.rag
+    history = [m.model_dump() for m in req.history]
+
+    def gen():
+        try:
+            for phase, payload in rag.stream_query(
+                req.question, chat_history=history, k=req.k, role=req.role
+            ):
+                if phase == "done":
+                    _log_query_result(rag, payload, req)
+                yield f"data: {json.dumps({'phase': phase, 'data': payload}, ensure_ascii=False)}\n\n"
+        except RateLimitError:
+            logger.warning("LLM rate limit / quota exceeded on /api/query/stream")
+            err = {"phase": "error", "data": {"status": 429, "message": (
+                "Limite di richieste del modello LLM raggiunto (quota del piano gratuito). "
+                "Riprova più tardi o configura un modello con credito disponibile.")}}
+            yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
+        except Exception:
+            logger.exception("stream query pipeline failed")
+            err = {"phase": "error", "data": {"status": 502, "message": (
+                "Il servizio di generazione non è momentaneamente disponibile. Riprova tra poco.")}}
+            yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        gen(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ── Bandi / Gare d'Appalto (Portale Appalti MIT) ─────────────────────────────────
