@@ -1,5 +1,0 @@
-INFO:     127.0.0.1:57999 - "GET /api/status HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57999 - "GET /api/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57999 - "POST /api/query HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57999 - "POST /api/login HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57999 - "POST /api/query HTTP/1.1" 200 OK
