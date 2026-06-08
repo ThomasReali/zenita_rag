@@ -161,6 +161,7 @@ class QueryResponse(BaseModel):
     standalone_query: str
     response: str
     sources: List[str]
+    source_links: Optional[List[Optional[str]]] = None  # URL ufficiale per fonte (enrichment MIT)
     context: List[str]
     model: str
     grounded: bool
@@ -334,6 +335,7 @@ class ConfigureResponse(BaseModel):
     scenario: str
     draft: str
     sources: List[str]
+    source_links: Optional[List[Optional[str]]] = None
     grounded: bool
     top_score: float
     latency_ms: Optional[int] = None

@@ -105,12 +105,13 @@ class OfferConfigurator:
         if not docs or top_cos < config.SCORE_THRESHOLD:
             return {
                 "scenario": scenario, "draft": NO_CONTEXT_DRAFT, "sources": [],
-                "grounded": False, "top_score": top_cos,
+                "source_links": [], "grounded": False, "top_score": top_cos,
                 "latency_ms": int((time.perf_counter() - t0) * 1000),
             }
 
         context_str = self.rag._build_context(docs, metas)
         sources = self.rag._format_sources(metas)
+        source_links = self.rag._format_source_links(metas)
         system_prompt = CONFIGURATOR_SYSTEM_PROMPT.format(
             context_str=context_str, scenario=scenario
         )
@@ -133,5 +134,6 @@ class OfferConfigurator:
                     top_cos, len(sources), latency_ms)
         return {
             "scenario": scenario, "draft": draft, "sources": sources,
-            "grounded": True, "top_score": top_cos, "latency_ms": latency_ms,
+            "source_links": source_links, "grounded": True, "top_score": top_cos,
+            "latency_ms": latency_ms,
         }

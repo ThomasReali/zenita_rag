@@ -7,6 +7,7 @@ interface QueryResponse {
   standalone_query: string
   response: string
   sources: string[]
+  source_links?: (string | null)[]
   context: string[]
   model: string
   grounded: boolean
@@ -427,12 +428,13 @@ function addAssistant(r: QueryResponse) {
          <div class="mb-2 flex items-center gap-2 text-[9.5px] font-mono uppercase tracking-[0.18em] text-slatev">
            ${ICONS.doc}<span>Fonti citate</span>
          </div>
-         ${r.sources.map((s, i) =>
-           `<div class="source-ref text-slatev">
-              <span class="source-ref-num">[${i + 1}]</span>
-              <span class="source-ref-text">${esc(s)}</span>
-            </div>`
-         ).join('')}
+         ${r.sources.map((s, i) => {
+           const url = r.source_links?.[i]
+           const txt = url
+             ? `<a href="${esc(url)}" target="_blank" rel="noopener" class="source-ref-text underline decoration-dotted underline-offset-2 transition-colors hover:text-azure-400" title="Apri la fonte ufficiale su mit.gov.it">${esc(s)} ↗</a>`
+             : `<span class="source-ref-text">${esc(s)}</span>`
+           return `<div class="source-ref text-slatev"><span class="source-ref-num">[${i + 1}]</span>${txt}</div>`
+         }).join('')}
        </div>`
     : ''
 

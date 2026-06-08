@@ -242,6 +242,26 @@ class VectorStore:
             ),
         )
 
+    def set_payload_by_source(self, source: str, payload: dict) -> None:
+        """Merge arbitrary payload fields onto every chunk of a source (Qdrant set_payload).
+
+        Deterministic, idempotent, NO re-embedding — the primitive used by the metadata
+        enrichment job (official title + mit.gov.it URLs from the MIT manifest). Only the
+        given keys are written; existing fields are preserved."""
+        if not payload:
+            return
+        self.client.set_payload(
+            collection_name=self.collection_name,
+            payload=payload,
+            points=models.FilterSelector(
+                filter=models.Filter(
+                    must=[models.FieldCondition(
+                        key="source", match=models.MatchValue(value=source)
+                    )]
+                )
+            ),
+        )
+
     def source_statuses(self) -> dict:
         """Map each distinct `source` → its current `status` (first chunk seen).
 

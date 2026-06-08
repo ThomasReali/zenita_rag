@@ -114,6 +114,14 @@ NORMATTIVA_AUDIT_ENABLED = os.getenv("NORMATTIVA_AUDIT_ENABLED", "0") == "1"
 # Append-only governance audit log (NIS2 integrity/traceability of status changes).
 GOVERNANCE_LOG_PATH = Path(os.getenv("GOVERNANCE_LOG_PATH", "./governance_log.db"))
 
+# Metadata enrichment (deterministic, offline): the MIT download manifest maps each decree
+# file → official title, date, number and the official mit.gov.it URLs. scripts/enrich_metadata.py
+# joins it onto the indexed chunks (set_payload, no re-embedding) so citations become verifiable
+# with a link to the source. Join key = basename of the manifest `output_file`.
+MIT_MANIFEST_FILE = Path(
+    os.getenv("MIT_MANIFEST_FILE", "./KNOWLEDGE/MIT Decreti PDF/manifest_download_mit.json")
+)
+
 # Query log (GDPR) — one SQLite row per query for analytics/audit.
 QUERY_LOG_ENABLED = os.getenv("QUERY_LOG_ENABLED", "1") == "1"
 QUERY_LOG_PATH = Path(os.getenv("QUERY_LOG_PATH", "./query_log.db"))

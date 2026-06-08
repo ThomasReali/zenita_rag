@@ -250,6 +250,19 @@ class RAGChain:
         return labels
 
     @staticmethod
+    def _format_source_links(metas: List[dict]) -> List[Optional[str]]:
+        """Official source URL per distinct source, in the SAME first-appearance order as
+        `_format_sources` — so `source_links[i]` pairs with `sources[i]` and the inline [i+1]
+        marker. Populated by the metadata enrichment (MIT manifest); None when unavailable."""
+        order = RAGChain._ordered_sources(metas)
+        url_by_src: dict = {}
+        for m in metas:
+            src = str(m.get("source", "sconosciuto"))
+            if src not in url_by_src and m.get("source_url"):
+                url_by_src[src] = m.get("source_url")
+        return [url_by_src.get(s) for s in order]
+
+    @staticmethod
     def _build_context(docs: List[str], metas: List[dict]) -> str:
         """Prefix each chunk with its source NUMBER ([Fonte N]) so the model cites inline as
         [N]. The numbering is first-appearance order and matches the 'Fonti citate' legend
@@ -500,7 +513,7 @@ class RAGChain:
         distinct = len({str(m.get("source")) for m in metas}) if metas else 0
         base = {
             "standalone_query": standalone_query, "docs": docs, "metas": metas,
-            "top_score": top_score, "obsolete": False,
+            "top_score": top_score, "obsolete": False, "source_metas": [],
         }
 
         if not docs or top_score < config.SCORE_THRESHOLD:
@@ -533,7 +546,7 @@ class RAGChain:
             # role-specific red template would otherwise hide the sources.
             base.update(mode="message",
                         response=AMBIGUITY_MESSAGE + "\n\n" + self._ambiguity_block(metas),
-                        sources=self._format_sources(metas),
+                        sources=self._format_sources(metas), source_metas=metas,
                         grounded=False, ambiguous=True, confidence="red")
         else:
             # Generate on labeled, cited context. 🟢 single source · 🟡 combined sources.
@@ -548,7 +561,7 @@ class RAGChain:
                 )
                 max_tokens = None
             base.update(mode="generate", system_prompt=system_prompt, max_tokens=max_tokens,
-                        sources=self._format_sources(metas),
+                        sources=self._format_sources(metas), source_metas=metas,
                         grounded=True, ambiguous=False, confidence=confidence)
         return base
 
@@ -566,6 +579,7 @@ class RAGChain:
             "response": response,
             "context": decision["docs"],
             "sources": decision["sources"],
+            "source_links": self._format_source_links(decision.get("source_metas", [])),
             "model": self.model,
             "grounded": decision["grounded"],
             "ambiguous": decision["ambiguous"],
