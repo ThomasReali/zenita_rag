@@ -475,32 +475,89 @@ function addError(msg: string) {
   scrollDown()
 }
 
+// Lightweight bubble shown while tokens stream in; replaced by the full card on `done`.
+function addLive(): HTMLElement {
+  const node = el(`
+    <div class="msg-in mx-auto mt-3 flex max-w-3xl">
+      <div class="resp-card border-l-[3px] border-l-[var(--color-signal-green)] border border-haze bg-card/90 px-5 py-4 shadow-lg shadow-navy-950/20 backdrop-blur-sm">
+        <div class="live-body whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink"></div>
+      </div>
+    </div>`)
+  messages().appendChild(node)
+  scrollDown()
+  return node
+}
+
+function setLive(node: HTMLElement, text: string) {
+  node.querySelector<HTMLElement>('.live-body')!.innerHTML =
+    renderRich(text) + '<span class="blink-cursor">▋</span>'
+}
+
+// Streaming ask (SSE): tokens appear live, then the final card (status + sources + excerpts)
+// replaces the live bubble. Same payload/contract as /api/query — only the delivery differs.
 async function ask(question: string) {
   $<HTMLInputElement>('#input').value = ''
   addUser(question)
   const node = thinking()
   const send = $<HTMLButtonElement>('#send')
   send.disabled = true
+  let live: HTMLElement | null = null
+  let acc = ''
+  let thinkingGone = false
+  const dropThinking = () => { if (!thinkingGone) { node.remove(); thinkingGone = true } }
   try {
-    const res = await fetch('/api/query', {
+    const res = await fetch('/api/query/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question, history, role: currentRole, session_id: sessionId, user_id: userId }),
     })
-    node.remove()
-    if (!res.ok) {
+    if (!res.ok || !res.body) {
+      dropThinking()
       const err = await res.json().catch(() => ({}))
       addError(err.detail || `Errore ${res.status}`)
       return
     }
-    const data: QueryResponse = await res.json()
-    addAssistant(data)
-    history.push({ role: 'user', content: question })
-    history.push({ role: 'assistant', content: data.response })
-    transcript.push({ q: question, r: data })
-    updateExportState()
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    let done: QueryResponse | null = null
+    let failed: { message?: string } | null = null
+    for (;;) {
+      const { value, done: rdone } = await reader.read()
+      if (rdone) break
+      buf += decoder.decode(value, { stream: true })
+      let i: number
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const frame = buf.slice(0, i).trim()
+        buf = buf.slice(i + 2)
+        if (!frame.startsWith('data:')) continue
+        let evt: { phase: string; data: any }
+        try { evt = JSON.parse(frame.slice(5).trim()) } catch { continue }
+        if (evt.phase === 'token') {
+          if (!live) { dropThinking(); live = addLive() }
+          acc += evt.data
+          setLive(live, acc)
+          scrollDown()
+        } else if (evt.phase === 'done') {
+          done = evt.data
+        } else if (evt.phase === 'error') {
+          failed = evt.data || {}
+        }
+      }
+    }
+    dropThinking()
+    if (live) live.remove()
+    if (failed) { addError(failed.message || 'Errore di generazione'); return }
+    if (done) {
+      addAssistant(done)
+      history.push({ role: 'user', content: question })
+      history.push({ role: 'assistant', content: done.response })
+      transcript.push({ q: question, r: done })
+      updateExportState()
+    }
   } catch (e) {
-    node.remove()
+    dropThinking()
+    if (live) live.remove()
     addError(String(e))
   } finally {
     send.disabled = false
