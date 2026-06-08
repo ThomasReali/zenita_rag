@@ -68,13 +68,18 @@ dipendenze di sistema → **archiviato** e riportato all'utente.
 **Verifiche live (backend riavviato):** streaming reale 568 token + risposta completa 2232 char;
 cache hit sulla 2ª chiamata (3 eventi, `cached=true`); suite `pytest` 139/139.
 
+**✅ Fatto dopo conferma dell'utente (2026-06-08, sessione interattiva):**
+- **D1 — OCR scansioni:** Tesseract 5.4 + lingua `ita` installati; fallback OCR attivo
+  (`OCR_ENABLED=1`); re-index → **19 decreti scansionati recuperati, +243 chunk** (KB 511→528 doc,
+  Qdrant 4569→4810 chunk). Verificato end-to-end (Direttiva Minniti citata da una risposta grounded).
+- **D2 — Configuratore d'offerta (bozza):** `OfferConfigurator` + `POST /api/configure` + **sezione UI
+  "Configura Offerta"**. Bozza grounded, citata, non vincolante; fallback onesto se KB insufficiente.
+- **Modello LLM:** confermato uso della key **OpenAI diretta** (`gpt-4o-mini`, a pagamento) — nessun 429.
+
 **📦 Archiviato — serve una tua decisione/dipendenza (nessuna azione presa):**
 - **C2** Ruolo da identità autenticata (SSO/IdP) — scelta di prodotto.
-- **D1** OCR scansioni — serve installare `tesseract-ocr` + lingua `ita` (pacchetto di sistema, admin).
-- **D2** Configuratore d'offerta agentico — alto sforzo + generativo non deterministico, da progettare insieme.
 - **D3** Enrichment metadati MIT — manca il file manifest sorgente (decreto→titolo/data).
 - **D4** Live-fetch gazzette ufficiali — integrazione esterna senza API stabile.
-- **D5** Modello LLM a pagamento per demo — scelta di budget/account (`CHAT_MODEL` + credito OpenRouter).
 
 **Per provare lo streaming:** `cd web; npm run dev` → http://localhost:5173 (backend già su :8000).
 **Per misurare i KPI:** `uv run python scripts/eval_rag.py` (fa chiamate LLM reali).
