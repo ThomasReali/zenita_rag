@@ -75,11 +75,15 @@ cache hit sulla 2ª chiamata (3 eventi, `cached=true`); suite `pytest` 139/139.
 - **D2 — Configuratore d'offerta (bozza):** `OfferConfigurator` + `POST /api/configure` + **sezione UI
   "Configura Offerta"**. Bozza grounded, citata, non vincolante; fallback onesto se KB insufficiente.
 - **Modello LLM:** confermato uso della key **OpenAI diretta** (`gpt-4o-mini`, a pagamento) — nessun 429.
+- **D3 — Enrichment metadati MIT:** manifest trovato (`manifest_download_mit`); `scripts/enrich_metadata.py`
+  ha arricchito **489/489 decreti** (titolo ufficiale + URL `mit.gov.it`, `set_payload` no re-embed).
+  Citazioni **cliccabili** verso la fonte ufficiale (chat + configuratore), verificato live.
+- **C2 — Login + ruolo server-side:** `auth.py` (token HMAC), `/api/login|logout|me`, ruolo dalla
+  sessione verificata (opt-in `AUTH_ENABLED`), UI con overlay di login. Verificato: il server ignora
+  il ruolo scelto dal client. OFF di default.
 
-**📦 Archiviato — serve una tua decisione/dipendenza (nessuna azione presa):**
-- **C2** Ruolo da identità autenticata (SSO/IdP) — scelta di prodotto.
-- **D3** Enrichment metadati MIT — manca il file manifest sorgente (decreto→titolo/data).
-- **D4** Live-fetch gazzette ufficiali — integrazione esterna senza API stabile.
+**📦 Archiviato — resta bloccato da dipendenza esterna:**
+- **D4** Live-fetch gazzette ufficiali — Normattiva/GU senza API stabile (solo scraping fragile).
 
 **Per provare lo streaming:** `cd web; npm run dev` → http://localhost:5173 (backend già su :8000).
 **Per misurare i KPI:** `uv run python scripts/eval_rag.py` (fa chiamate LLM reali).

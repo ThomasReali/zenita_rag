@@ -98,8 +98,9 @@ ambiguità** con giudice LLM → discrezione), **role-awareness** (3 profili + c
 GDPR** (audit log + anonimizzazione notturna + **pseudonimizzazione reversibile della PII** verso l'LLM, Art. 32),
 **UI FastAPI + frontend Vite/TS/Tailwind** (con **streaming SSE** delle risposte e sezione **Configura
 Offerta**), **cache risposte** + **rate-limiting per IP**, **re-ranking cross-encoder** opt-in, **OCR**
-delle scansioni (Tesseract/ita, opt-in), **hardening** (indicizzazione incrementale, retry, logging) e
-**146 test**.
+delle scansioni (Tesseract/ita, opt-in), **citazioni con link ufficiale MIT** (enrichment da manifest),
+**login + ruolo verificato server-side** (opt-in), **hardening** (indicizzazione incrementale, retry,
+logging) e **162 test**.
 
 ### Sezione Gare d'Appalto (Portale Appalti MIT) — scraping live + RAG dedicato
 Sezione separata dal chatbot principale (switch nella command rail). All'apertura esegue lo
@@ -153,8 +154,9 @@ sblocca Friendly Captcha (proof-of-work BLAKE2b) → listAllBandi per stato (in 
 - **SQL injection non applicabile**: l'audit log SQLite usa solo query **parametrizzate**.
 - **Rate-limiting per IP** (sliding-window in-memory) su `/api/query`, `/api/query/stream` e
   `/api/bandi/query`: oltre la quota → **HTTP 429** (difesa da flood / costo LLM incontrollato).
-- *In backlog*: `role` da **identità autenticata** server-side (oggi è selezionato dal client →
-  governance, non sicurezza).
+- **Ruolo da identità autenticata** (opt-in `AUTH_ENABLED`): con login attivo il `role` arriva da una
+  **sessione firmata** (token HMAC, cookie httponly) e non dal client → la role-awareness diventa
+  controllo di sicurezza reale (RNF6). `POST /api/login` · `/api/logout` · `GET /api/me`.
 
 ## 5. Configurazione
 
@@ -179,6 +181,9 @@ Tutto in `.env` (vedi `.env.example` — fonte di verità in [MODELLO_DATI.md §
 | `RATE_LIMIT_PER_MINUTE` / `RATE_LIMIT_WINDOW_SECONDS` | `60` / `60` | quota richieste e finestra |
 | `OCR_ENABLED` | `0` | OCR fallback per PDF scansionati (richiede Tesseract + `uv sync --extra ocr`) |
 | `TESSERACT_CMD` / `OCR_LANG` | *(PATH)* / `ita` | percorso a `tesseract.exe` (se non in PATH) e lingua OCR |
+| `AUTH_ENABLED` | `0` | login + ruolo verificato server-side (sessione firmata invece del ruolo client) |
+| `AUTH_USERS` / `AUTH_SECRET` | *(demo)* / *(dev)* | utenti `user:password:role,…` e chiave HMAC del token (**cambiala in prod**) |
+| `MIT_MANIFEST_FILE` | `./KNOWLEDGE/MIT Decreti PDF/manifest_download_mit.json` | manifest per l'enrichment metadati (`scripts/enrich_metadata.py`) |
 | `DATA_DIR` | `./data` | sorgenti da indicizzare (`./KNOWLEDGE` per il corpus) |
 | `QUERY_LOG_ENABLED` | `1` | abilita l'audit log delle query (SQLite) |
 | `QUERY_LOG_PATH` | `./query_log.db` | percorso del DB del log query |
@@ -209,7 +214,7 @@ uv run python scripts/anonymize_logs.py --dry-run    # anteprima; poi senza --dr
 # alternative
 streamlit run scripts/app.py             # vecchia UI Streamlit
 uv run python scripts/query_rag.py --role bid_manager  # CLI (multi-turn, profilo selezionabile)
-uv run pytest tests/ -q                  # 146 test (LLM mockato)
+uv run pytest tests/ -q                  # 162 test (LLM mockato)
 
 # (opzionale) abilita il NER di Microsoft Presidio per il masking PII di nomi/organizzazioni
 uv sync --extra pii && uv run python -m spacy download it_core_news_lg
@@ -241,14 +246,15 @@ Dettaglio in [REQUISITI.md §8](./docs/REQUISITI.md).
 **streaming risposte (SSE)** `POST /api/query/stream` · **cache risposte** (TTL+LRU) ·
 **re-ranking cross-encoder** (opt-in) · **rate-limiting per IP** · **mini eval-harness** (`scripts/eval_rag.py`) ·
 **OCR scansioni** (Tesseract/ita → 19 decreti recuperati, +243 chunk) ·
-**configuratore d'offerta** (bozza grounded, `POST /api/configure` + sezione UI).
+**configuratore d'offerta** (bozza grounded, `POST /api/configure` + sezione UI) ·
+**enrichment metadati MIT** (citazioni con link ufficiale `mit.gov.it`, 489 decreti) ·
+**login + ruolo verificato server-side** (opt-in, RNF6).
 
 **Aperto / in backlog:**
 
 | Priorità | Item | Blocco |
 |----------|------|--------|
-| Alta | Modello a pagamento per demo affidabile | es. `google/gemini-2.0-flash-001` vs free rate-limited |
-| Media | `role` da identità autenticata server-side | richiede scelta IdP/SSO |
+| Bassa | Live-fetch gazzette ufficiali | Normattiva/GU senza API stabile (scraping fragile) |
 | Bassa | Enrichment metadati via manifest MIT | join decreto→titolo/data (manca il manifest) |
 | Bassa | Live-fetch gazzette ufficiali | integrazione fonte esterna |
 | Bassa | Capacità agentiche (configuratore offerta) | — |
@@ -275,7 +281,7 @@ NextPulse/
 │   ├── query_rag.py           # Q&A da terminale (multi-turn, --role)
 │   ├── anonymize_logs.py      # job notturno GDPR: anonimizza i log oltre la retention
 │   └── app.py                 # UI Streamlit alternativa (deprecata)
-├── tests/test_rag.py          # suite principale (146 test totali, LLM mockato)
+├── tests/test_rag.py          # suite principale (162 test totali, LLM mockato)
 ├── data/                      # documenti da indicizzare (gitignored)
 ├── qdrant_data/               # store Qdrant embedded (gitignored)
 ├── KNOWLEDGE/                 # corpus reale fornito (PDF normativi, CSV/XLSX/DOCX/JSON)
