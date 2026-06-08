@@ -1,10 +1,11 @@
 # NextPulse — Documento dei Requisiti
 
-> **Stato:** bozza riveduta (rev. 4 — modulo Bandi/Gare MIT + hardening sicurezza API) · **Data:** 2026-06-07 · **Owner:** team NextPulse
+> **Stato:** rev. 5 (modulo Bandi/Gare MIT + hardening + iterazione miglioramenti) · **Data:** 2026-06-08 · **Owner:** team NextPulse
 > Documento di lavoro interno. Descrive **cosa** deve fare l'AI Sales Assistant per Engine SpA
 > e i casi d'uso che deve coprire. Compagno di [MODELLO_DATI.md](./MODELLO_DATI.md) (com'è
-> strutturato il dato — **unica fonte di verità per la configurazione**) e [BRIEF.md](./BRIEF.md)
-> (come lo costruiamo, a fasi).
+> strutturato il dato — **unica fonte di verità per la configurazione**), [ARCHITETTURA.md](./ARCHITETTURA.md)
+> (**come funziona** + stack), [CHANGELOG.md](./CHANGELOG.md) (interventi datati) e
+> [INTERVENTI_FUTURI.md](./INTERVENTI_FUTURI.md) (backlog).
 
 ## 0. Contesto in una riga
 
@@ -236,7 +237,26 @@ della challenge (Anceschi, Pastore, Guida) come fonte di requisiti via discovery
 | RF24, RF25 | UC7 | bandi | ✅ fatto (scraper Portale Appalti MIT + collection `bandi_mit` + estrazione requisiti; `bandi_scraper.py`) |
 | RF26, RF27 | UC7 | bandi | ✅ fatto (chatbot bandi grounded `/api/bandi/query` + scraping SSE `/api/bandi/scrape`) |
 | RF28 | UC4, UC5 | extra | ✅ fatto (audit obsolescenza/poisoning **deterministico**: filtro `status`, avviso "abrogato" no-LLM, job ibrido + quarantena, `governance_log` NIS2) |
-| RNF6 | tutti | sicurezza | ✅ fatto (validazione input → 422, no leak errori; rate-limit/auth ruolo in backlog) |
+| RNF6 | tutti | sicurezza | ✅ fatto (validazione input → 422, no leak errori, **rate-limiting per IP** → 429, **login + ruolo server-side** opt-in) |
+
+## 7.1 Estensioni implementate (iterazione 2026-06-08)
+
+> Migliorie oltre i requisiti originali. Dettaglio in [CHANGELOG.md](./CHANGELOG.md), funzionamento
+> in [ARCHITETTURA.md](./ARCHITETTURA.md).
+
+| Estensione | Stato | Riferimento |
+|-----------|-------|-------------|
+| **Gate di intento** (fuori dominio → risposta pulita, no chrome) | ✅ | `rag_chain.py` `INTENT_GATE`, campo `off_topic` |
+| **Streaming risposte (SSE)** token-by-token | ✅ | `POST /api/query/stream` |
+| **Cache risposte** (TTL+LRU) | ✅ | `cache.py`, campo `cached` |
+| **Re-ranking cross-encoder** (opt-in) | ✅ | `reranker.py` `RERANK_ENABLED` |
+| **Rate-limiting per IP** → 429 | ✅ | `ratelimit.py` |
+| **Login + ruolo verificato server-side** (opt-in) | ✅ | `auth.py`, `/api/login\|logout\|me` |
+| **OCR scansioni** (Tesseract/ita) → 19 decreti, +243 chunk | ✅ | `document_processor.py` `OCR_ENABLED` |
+| **Configuratore d'offerta** (bozza grounded) | ✅ | `configurator.py`, `POST /api/configure` + UI |
+| **Enrichment metadati MIT** (citazioni con link ufficiale) | ✅ | `scripts/enrich_metadata.py`, `source_links` |
+| **Fix color coding** (ambiguo = rosso, barra = governance) | ✅ | `web/src/main.ts`, `style.css` |
+| **Fix anti-troncamento** (max_tokens) + riordino priorità ruoli | ✅ | `role_manager.py` |
 
 ## 8. Assunzioni & rischi aperti
 

@@ -4,7 +4,7 @@ Sistema **RAG** (Retrieval-Augmented Generation) che risponde alle domande del t
 commerciale **solo** sulla base della documentazione aziendale, **cita sempre le fonti** e
 **dice quando non sa**. Stack ibrido: vector DB locale + embedding locali + LLM via **OpenRouter**.
 
-> **Documenti di progetto:** [REQUISITI.md](./docs/REQUISITI.md) · [MODELLO_DATI.md](./docs/MODELLO_DATI.md) · [KPI.md](./docs/KPI.md) · [PITCH.md](./docs/PITCH.md) · [BUSINESS_PROPOSAL.md](./docs/BUSINESS_PROPOSAL.md)
+> **Documenti di progetto:** [ARCHITETTURA.md](./docs/ARCHITETTURA.md) (funzionamento + stack) · [REQUISITI.md](./docs/REQUISITI.md) · [MODELLO_DATI.md](./docs/MODELLO_DATI.md) · [CHANGELOG.md](./docs/CHANGELOG.md) · [INTERVENTI_FUTURI.md](./docs/INTERVENTI_FUTURI.md) · [KPI.md](./docs/KPI.md) · [PITCH.md](./docs/PITCH.md) · [BUSINESS_PROPOSAL.md](./docs/BUSINESS_PROPOSAL.md)
 > **Evento:** Next Pulse — Workshop AI, 6-7 giugno 2026, Live Campus Chieti · **Livello target:** Avanzato (prototipo RAG)
 
 ---
